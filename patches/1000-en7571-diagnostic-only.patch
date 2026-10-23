@@ -1,0 +1,22 @@
+--- a/drivers/net/optical/airoha/en7571_main.c
++++ b/drivers/net/optical/airoha/en7571_main.c
+@@ -556,6 +556,19 @@
+ 		return dev_err_probe(dev, -EINVAL,
+ 				     "valid per-unit EN7571 calibration is required\n");
+ 
++	/*
++	 * Board-porting diagnostic: detection above only reads silicon IDs.
++	 * Stop before reset, ADC/APD setup, power control, frontend registration
++	 * or scheduling the control worker. This does not assert a physical
++	 * TX-disable line; keep the xPON MAC/PHY disabled in the diagnostic DT.
++	 */
++	if (device_property_read_bool(dev, "airoha,diagnostic-only")) {
++		dev_info(dev,
++			 "EN7571 detected; %zu-byte calibration validated; diagnostic only\n",
++			 priv->lddla.bob_len);
++		return 0;
++	}
++
+ 	mutex_lock(&priv->lddla.lock);
+ 	ret = en7571_init(priv);
+ 	mutex_unlock(&priv->lddla.lock);

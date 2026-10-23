@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/Sirherobrine23/openwrt.git",
+  "revision": "880b7e32666d8c87aaf30cd5e99d965788c163ac",
+  "target": "airoha/en7528",
+  "device": "jiofiber_jcow414"
+}

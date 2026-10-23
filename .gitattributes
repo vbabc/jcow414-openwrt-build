@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Unified diff context deliberately prefixes tab indentation with a space.
+*.patch -whitespace

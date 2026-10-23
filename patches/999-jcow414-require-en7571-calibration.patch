@@ -1,0 +1,51 @@
+--- a/drivers/net/optical/airoha/en7571_main.c
++++ b/drivers/net/optical/airoha/en7571_main.c
+@@ -484,6 +484,37 @@
+ 	priv->apd_voltage_mv = EN7571_APD_KNEE_MV_DEF;
+ }
+ 
++/* Require factory calibration before initializing the optical transmitter. */
++static bool en7571_factory_calibration_ready(struct airoha_lddla *lddla)
++{
++	static const u32 required[] = {
++		EN7571_FL_IAV_IMOD, EN7571_FL_PAV_P1, EN7571_FL_T0CT1C,
++	};
++	u32 magic, profile, word;
++	unsigned int i;
++
++	if (!lddla->bob_valid ||
++	    lddla->bob_len < EN7571_FL_LUT_END + sizeof(u32))
++		return false;
++
++	magic = lddla_flash_read(lddla, EN7571_FL_MAGIC);
++	if (!AIROHA_LDDLA_BOB_MAGIC_VALID(magic, EN7571_BOB_VARIANT))
++		return false;
++	profile = AIROHA_LDDLA_BOB_MAGIC_PROFILE(magic);
++	if (profile != AIROHA_LDDLA_BOB_PROFILE_GPON &&
++	    profile != AIROHA_LDDLA_BOB_PROFILE_EPON &&
++	    profile != AIROHA_LDDLA_BOB_PROFILE_XPON)
++		return false;
++
++	for (i = 0; i < 3; i++) {
++		word = lddla_flash_read(lddla, required[i]);
++		if (!word || word == EN7571_FLASH_ERASED)
++			return false;
++	}
++
++	return true;
++}
++
+ static int en7571_probe(struct i2c_client *client)
+ {
+ 	struct device *dev = &client->dev;
+@@ -521,6 +552,10 @@
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "calibration load failed\n");
+ 
++	if (!en7571_factory_calibration_ready(&priv->lddla))
++		return dev_err_probe(dev, -EINVAL,
++				     "valid per-unit EN7571 calibration is required\n");
++
+ 	mutex_lock(&priv->lddla.lock);
+ 	ret = en7571_init(priv);
+ 	mutex_unlock(&priv->lddla.lock);

@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: GPL-2.0-only
+"""Fetch pinned public inputs and configure an isolated diagnostic build."""
+import argparse
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+
+parser = argparse.ArgumentParser()
+parser.add_argument('variant', choices=['baseline', 'probe-only'])
+args = parser.parse_args()
+repository = pathlib.Path(__file__).resolve().parent.parent
+build_root = pathlib.Path(os.environ['BUILD_ROOT']).resolve()
+source = build_root / 'openwrt'
+artifacts = repository / 'artifacts'
+artifacts.mkdir(exist_ok=True)
+build_root.mkdir(parents=True, exist_ok=True)
+assert not source.exists(), 'Refusing to overwrite an existing build tree'
+
+
+def run(*command, cwd=repository):
+    subprocess.run(command, cwd=cwd, check=True)
+
+
+def checkout(path, url, revision):
+    path.mkdir(parents=True)
+    run('git', 'init', '-q', str(path))
+    run('git', '-C', str(path), 'remote', 'add', 'origin', url)
+    run('git', '-C', str(path), 'fetch', '--depth=1', 'origin', revision)
+    run('git', '-C', str(path), 'checkout', '--detach', revision)
+    actual = subprocess.check_output(['git', '-C', str(path), 'rev-parse', 'HEAD'], text=True).strip()
+    assert actual == revision
+
+
+run('gcc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Itests',
+    'tests/test-en7571-calibration-guard.c', '-o', str(build_root / 'guard-test'))
+with (artifacts / 'calibration-guard-test.log').open('w') as output:
+    subprocess.run([str(build_root / 'guard-test')], stdout=output, check=True)
+
+lock = json.loads((repository / 'source.lock.json').read_text())
+checkout(source, lock['repository'], lock['revision'])
+feeds = json.loads((repository / 'feeds.lock.json').read_text())
+feed_lines = []
+for feed in feeds:
+    checkout(source / 'feeds' / feed['name'], feed['url'], feed['revision'])
+    feed_lines.append(f"src-git {feed['name']} {feed['url']}^{feed['revision']}")
+(source / 'feeds.conf').write_text('\n'.join(feed_lines) + '\n')
+download_cache = repository / '.cache/downloads'
+download_cache.mkdir(parents=True, exist_ok=True)
+(source / 'dl').symlink_to(download_cache, target_is_directory=True)
+run('./scripts/feeds', 'update', '-i', cwd=source)
+run('./scripts/feeds', 'install', '-a', cwd=source)
+run('python3', str(repository / 'ci/prepare-board.py'), str(source))
+kernel_patches = source / 'target/linux/airoha/patches-6.18'
+shutil.copyfile(repository / 'patches/999-jcow414-require-en7571-calibration.patch', kernel_patches / '999-jcow414-require-en7571-calibration.patch')
+if args.variant == 'probe-only':
+    shutil.copyfile(repository / 'patches/1000-en7571-diagnostic-only.patch', kernel_patches / '1000-en7571-diagnostic-only.patch')
+    patch = repository / 'patches/jcow414-probe-only-board.patch'
+    run('git', 'apply', '--check', str(patch), cwd=source)
+    run('git', 'apply', str(patch), cwd=source)
+
+seed = (repository / 'config.seed').read_text()
+seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-1"\n'
+seed += f'CONFIG_CCACHE_DIR="{repository / ".cache/ccache"}"\n'
+(source / '.config').write_text(seed)
+run('make', '-j1', 'defconfig', cwd=source)
+config = (source / '.config').read_text()
+for selected in ['TARGET_airoha_en7528_DEVICE_jiofiber_jcow414', 'PACKAGE_luci-app-omci', 'PACKAGE_omci-agent', 'CCACHE']:
+    assert f'CONFIG_{selected}=y\n' in config, f'Missing configuration: {selected}'
+run('git', 'diff', '--check', cwd=source)
+with (artifacts / 'config.seed.lock').open('w') as output:
+    subprocess.run(['./scripts/diffconfig.sh'], cwd=source, stdout=output, check=True)
+with (artifacts / 'source-changes.patch').open('w') as output:
+    subprocess.run(['git', 'diff'], cwd=source, stdout=output, check=True)
+for name in ['source.lock.json', 'feeds.lock.json']:
+    shutil.copyfile(repository / name, artifacts / name)
+shutil.copytree(repository / 'patches', artifacts / 'patches', dirs_exist_ok=True)
+manifest = {
+    'variant': args.variant,
+    'source': lock,
+    'build_repository_commit': os.environ.get('GITHUB_SHA', 'local-validation'),
+    'optical_mac_phy_enabled': False,
+    'hardware_validated': False,
+    'patches_sha256': {
+        item.name: hashlib.sha256(item.read_bytes()).hexdigest()
+        for item in sorted((repository / 'patches').glob('*.patch'))
+    },
+}
+(artifacts / 'build-provenance.json').write_text(json.dumps(manifest, indent=2) + '\n')
+print('Pinned source, paired patches and diagnostic configuration prepared:', args.variant)

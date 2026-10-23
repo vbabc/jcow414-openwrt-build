@@ -1,0 +1,85 @@
+name: Build JCOW414 diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Diagnostic variant (neither enables GPON service)
+        required: true
+        default: probe-only
+        type: choice
+        options:
+          - baseline
+          - probe-only
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jcow414-${{ inputs.variant }}
+  cancel-in-progress: false
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      BUILD_ROOT: ${{ runner.temp }}/jcow414-build
+      VARIANT: ${{ inputs.variant }}
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPILERCHECK: content
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout build inputs
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Prepare ephemeral hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fixed preinstalled SDK paths on this disposable GitHub-hosted VM.
+          sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential clang flex bison gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-setuptools python3-dev rsync swig unzip zlib1g-dev file wget curl ca-certificates patch diffutils perl time ccache cmake ninja-build pkgconf libelf-dev libdw-dev zstd xz-utils device-tree-compiler
+          mkdir -p artifacts .cache/downloads .cache/ccache
+          dpkg-query -W > artifacts/runner-packages.lock
+          nproc
+          free -h
+          df -h "$RUNNER_TEMP"
+          available=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          test "$available" -ge 20971520 || { echo 'Need at least 20 GiB free for a full source build'; exit 1; }
+
+      - name: Restore public downloads and compiler cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .cache/downloads
+            .cache/ccache
+          key: jcow414-ubuntu24-${{ hashFiles('source.lock.json', 'feeds.lock.json', 'config.seed', 'patches/**') }}-${{ inputs.variant }}-${{ github.run_id }}
+          restore-keys: |
+            jcow414-ubuntu24-${{ hashFiles('source.lock.json', 'feeds.lock.json', 'config.seed', 'patches/**') }}-${{ inputs.variant }}-
+
+      - name: Build pinned diagnostic firmware
+        shell: bash
+        run: bash ci/build.sh
+
+      - name: Record outcome
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          echo "Variant: $VARIANT" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Diagnostic build only. GPON service and hardware validation remain unfinished.' >> "$GITHUB_STEP_SUMMARY"
+          if test -f artifacts/build.exit; then cat artifacts/build.exit; fi
+          df -h "$RUNNER_TEMP"
+
+      - name: Upload firmware and build records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jcow414-${{ inputs.variant }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 3

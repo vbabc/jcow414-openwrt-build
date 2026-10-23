@@ -1,0 +1,24 @@
+--- a/target/linux/airoha/dts/en7528_jiofiber_jcow414.dts
++++ b/target/linux/airoha/dts/en7528_jiofiber_jcow414.dts
+@@ -194,3 +194,21 @@
+ 		};
+ 	};
+ };
++
++/* Requires 1000-en7571-diagnostic-only.patch; never use with stock probe. */
++&i2c0 {
++	status = "okay";
++
++	jcow414_en7571: lddla@70 {
++		compatible = "airoha,en7571";
++		reg = <0x70>;
++		nvmem-cells = <&jcow414_optical_bob>;
++		nvmem-cell-names = "calibration";
++		airoha,diagnostic-only;
++	};
++};
++
++/* No optical MAC/PHY activation or WAN datapath in this diagnostic. */
++&xpon_phy { status = "disabled"; };
++&xpon { status = "disabled"; };
++&gdm2 { status = "disabled"; };

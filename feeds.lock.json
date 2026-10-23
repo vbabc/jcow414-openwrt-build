@@ -1,0 +1,32 @@
+[
+  {
+    "name": "packages",
+    "url": "https://github.com/openwrt/packages.git",
+    "revision": "5035328d8dca877ce789d90783f399aba6490402",
+    "date": "2026-10-20T19:03:57Z"
+  },
+  {
+    "name": "luci",
+    "url": "https://github.com/openwrt/luci.git",
+    "revision": "0a601b651af34ae4a83dd89f417dccdc474ec348",
+    "date": "2026-10-18T18:38:00Z"
+  },
+  {
+    "name": "routing",
+    "url": "https://github.com/openwrt/routing.git",
+    "revision": "4b9891b9136259f93294a424507ed24c5e8c1cbd",
+    "date": "2026-08-11T11:30:36Z"
+  },
+  {
+    "name": "telephony",
+    "url": "https://github.com/openwrt/telephony.git",
+    "revision": "5d68d53c160a325ea9d03fce393e051573bcc736",
+    "date": "2026-07-13T21:33:54Z"
+  },
+  {
+    "name": "video",
+    "url": "https://github.com/openwrt/video.git",
+    "revision": "6917907d4d6c670cf85be525d23216595655061d",
+    "date": "2026-10-11T17:23:56Z"
+  }
+]
