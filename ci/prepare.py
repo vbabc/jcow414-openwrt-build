@@ -61,14 +61,20 @@ if args.variant == 'probe-only':
     run('git', 'apply', '--check', str(patch), cwd=source)
     run('git', 'apply', str(patch), cwd=source)
 
-seed = (repository / 'config.seed').read_text()
-seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-1"\n'
-seed += f'CONFIG_CCACHE_DIR="{repository / ".cache/ccache"}"\n'
+if args.variant == 'baseline':
+    # Exact sanitized diffconfig captured from the active LXC build.
+    seed = (repository / 'config.lxc.seed').read_text()
+else:
+    seed = (repository / 'config.seed').read_text()
+    seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-1"\n'
+    seed += f'CONFIG_CCACHE_DIR="{repository / ".cache/ccache"}"\n'
 (source / '.config').write_text(seed)
 run('make', '-j1', 'defconfig', cwd=source)
 config = (source / '.config').read_text()
-for selected in ['TARGET_airoha_en7528_DEVICE_jiofiber_jcow414', 'PACKAGE_luci-app-omci', 'PACKAGE_omci-agent', 'CCACHE']:
+for selected in ['TARGET_airoha_en7528_DEVICE_jiofiber_jcow414', 'PACKAGE_luci-app-omci', 'PACKAGE_omci-agent']:
     assert f'CONFIG_{selected}=y\n' in config, f'Missing configuration: {selected}'
+if args.variant == 'probe-only':
+    assert 'CONFIG_CCACHE=y\n' in config
 run('git', 'diff', '--check', cwd=source)
 with (artifacts / 'config.seed.lock').open('w') as output:
     subprocess.run(['./scripts/diffconfig.sh'], cwd=source, stdout=output, check=True)
@@ -81,6 +87,7 @@ manifest = {
     'variant': args.variant,
     'source': lock,
     'build_repository_commit': os.environ.get('GITHUB_SHA', 'local-validation'),
+    'firmware_seed_sha256': hashlib.sha256(seed.encode()).hexdigest(),
     'optical_mac_phy_enabled': False,
     'hardware_validated': False,
     'patches_sha256': {
