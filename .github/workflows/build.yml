@@ -24,7 +24,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     env:
-      BUILD_ROOT: ${{ runner.temp }}/jcow414-build
       VARIANT: ${{ inputs.variant }}
       CCACHE_MAXSIZE: 2G
       CCACHE_COMPILERCHECK: content
@@ -39,6 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "BUILD_ROOT=$RUNNER_TEMP/jcow414-build" >> "$GITHUB_ENV"
           # Fixed preinstalled SDK paths on this disposable GitHub-hosted VM.
           sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo apt-get update -qq
