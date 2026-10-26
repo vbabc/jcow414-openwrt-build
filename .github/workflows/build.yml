@@ -1,34 +1,29 @@
-name: Isolated toolchain cache benchmark
+name: Cached guarded JCOW414 development builds
 
 on:
   workflow_dispatch:
     inputs:
       variant:
-        description: Identical firmware inputs for both benchmark passes
+        description: Diagnostic build only; no deployment
         required: true
-        default: frontend-diag
+        default: phy-diag
         type: choice
         options:
           - baseline
           - probe-only
           - frontend-diag
+          - phy-diag
 
 permissions:
   contents: read
 
 concurrency:
-  group: jcow414-speed-experiment-${{ github.ref }}-${{ inputs.variant }}
+  group: jcow414-phy-development-${{ github.ref }}-${{ inputs.variant }}
   cancel-in-progress: false
 
 jobs:
-  prime:
+  firmware:
     uses: ./.github/workflows/cache-pass.yml
     with:
-      phase: prime
-      variant: ${{ inputs.variant }}
-  warm:
-    needs: prime
-    uses: ./.github/workflows/cache-pass.yml
-    with:
-      phase: warm
+      phase: auto
       variant: ${{ inputs.variant }}

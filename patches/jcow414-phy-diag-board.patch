@@ -1,0 +1,20 @@
+--- a/target/linux/airoha/dts/en7528_jiofiber_jcow414.dts
++++ b/target/linux/airoha/dts/en7528_jiofiber_jcow414.dts
+@@ -219,3 +219,17 @@
+ 	airoha,frontend-diagnostic;
+ 	tx-disable-gpios = <&pinctrl 16 GPIO_ACTIVE_HIGH>;
+ };
++
++/* Requires 1003: the PHY is the sole owner of the asserted GPIO16. */
++&jcow414_en7571 {
++	/delete-property/ airoha,frontend-diagnostic;
++	/delete-property/ tx-disable-gpios;
++	airoha,phy-diagnostic;
++	phys = <&xpon_phy>;
++	phy-names = "xpon";
++};
++
++&xpon_phy {
++	airoha,tx-inhibited-diagnostic;
++	status = "okay";
++};

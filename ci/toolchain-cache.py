@@ -11,7 +11,7 @@ import subprocess
 import time
 
 LIMIT = 2 * 1024**3
-SCHEMA = 'jcow414-speed-v1'
+SCHEMA = 'jcow414-tools-v2'
 
 
 def digest(path):
@@ -32,7 +32,9 @@ def driver_only_patch(text):
     pairs = re.findall(r'^(?:--- a/(\S+)|\+\+\+ b/(\S+))', text, re.M)
     paths = [a or b for a, b in pairs]
     return bool(paths) and all(path.startswith(('drivers/net/optical/airoha/', 'target/linux/airoha/dts/'))
-                               or path == 'drivers/leds/trigger/ledtrig-netdev.c' for path in paths)
+                               or path in ('drivers/leds/trigger/ledtrig-netdev.c',
+                                           'drivers/phy/airoha/phy-airoha-xpon.c',
+                                           'include/linux/phy/phy-airoha-xpon.h') for path in paths)
 
 
 def safe_member(name):

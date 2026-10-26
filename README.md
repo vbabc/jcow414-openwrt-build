@@ -6,11 +6,20 @@ The source is [Sirherobrine23/openwrt](https://github.com/Sirherobrine23/openwrt
 
 ## Build
 
+This development branch uses the verified tools/compiler cache with automatic
+restore or cold-build fallback, in one build pass. The first run on a new branch
+or incompatible cache key must populate its cache. The separate benchmark took
+34m29s for prime and 6m29s for warm; those are measured outcomes, not an ETA for
+every change. Runtime kernel/target objects are always prepared fresh. Cache
+identity is strict; there are no broad fallbacks for compiled tools and the
+compressed tools archive remains bounded to 2 GiB. No deployment occurs.
+
 Open **Actions → Build JCOW414 diagnostics → Run workflow**. Choose:
 
 - **baseline** (default): use the pinned source, feeds and sanitized LXC configuration, with the appended-DTB boot fix, the RAM-tested UART/LAN board corrections and version `pon-dev3`. The captured `config.lxc.seed` remains historical; the build script overrides its original version label. I2C, optical PHY/MAC and GDM2 remain disabled.
 - **probe-only**: enable the I2C controller and EN7571 identity/calibration probe. A paired driver patch returns before optical initialization, frontend registration or starting the control worker. Optical PHY/MAC and GDM2 remain disabled.
 - **frontend-diag**: experimental `pon-frontend-diag-1` bench build. Require exclusive GPIO16 ownership, drive the active-high transmitter disable high and read it back before frontend initialization; recheck it afterward. Register only temperature, supply-voltage and receiver-power telemetry. Omit transmitter callbacks, debug controls and the periodic control worker. Optical PHY/MAC and GDM2 remain disabled. This variant does program the analog frontend, including ADC/APD settings and TX control registers, while TX-disable is held; test it without fibre. It has not yet been hardware validated.
+- **phy-diag**: `pon-phy-diag-1`, an untested digital-PHY bench variant. The PHY exclusively owns GPIO16 and forces TX-disable asserted on all enable paths. EN7571 obtains the PHY dependency and verifies inhibit before analog initialization, then initializes/configures the digital PHY and rechecks it. Both periodic recovery/control workers are skipped. A read-only PHY diagnostic status is added; MAC/GDM2 remain disabled. See [PHY-DIAGNOSTIC.md](PHY-DIAGNOSTIC.md). Compilation and RAM validation are required before hardware claims.
 
 The workflow uses an Ubuntu 24.04 standard hosted runner, up to four build jobs (bounded by available CPUs), pinned Actions, download caching, a bounded compiler cache for all variants, and three-day artifact retention. A fallback cache key reuses downloads across patch changes; OpenWrt still verifies source hashes and ccache validates compiler/content keys. It uploads firmware, source/configuration records and logs. It performs no deployment. Matching firmware inputs do not promise byte-identical output across different host environments. A compilation success does not establish bootability, optical correctness or ISP interoperability.
 
