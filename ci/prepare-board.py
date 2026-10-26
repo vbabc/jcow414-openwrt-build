@@ -20,6 +20,18 @@ def record(relative, modify):
         path.write_text(after)
 
 addition = '''
+/* RAM-tested board fixes: select the actual UART and enable LAN PHYs. */
+/ {
+	chosen {
+		stdout-path = "/soc/serial@1fbf0000:115200";
+	};
+};
+
+&gsw_phy1 { status = "okay"; };
+&gsw_phy2 { status = "okay"; };
+&gsw_phy3 { status = "okay"; };
+&gsw_phy4 { status = "okay"; };
+
 /*
  * JCOW414 factory optical calibration, recovered offline from this unit's
  * stock production record. The stock exporter writes 225 bytes from this

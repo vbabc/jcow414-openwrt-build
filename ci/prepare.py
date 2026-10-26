@@ -67,10 +67,10 @@ if args.variant == 'baseline':
     # the pon-dev1 image that panicked before device-tree discovery.
     seed = (repository / 'config.lxc.seed').read_text()
     assert 'CONFIG_VERSION_NUMBER="pon-dev1"' in seed
-    seed = seed.replace('CONFIG_VERSION_NUMBER="pon-dev1"', 'CONFIG_VERSION_NUMBER="pon-dev2"', 1)
+    seed = seed.replace('CONFIG_VERSION_NUMBER="pon-dev1"', 'CONFIG_VERSION_NUMBER="pon-dev3"', 1)
 else:
     seed = (repository / 'config.seed').read_text()
-    seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-2"\n'
+    seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-3"\n'
 seed = '\n'.join(line for line in seed.splitlines() if not line.startswith(('CONFIG_CCACHE', 'CONFIG_DEVEL=')) and line not in ('# CONFIG_CCACHE is not set', '# CONFIG_DEVEL is not set')) + '\n'
 # CCACHE has a prompt conditional on DEVEL in the pinned Config-devel.in;
 # without DEVEL the user value is hidden and defconfig clears it.

@@ -42,6 +42,10 @@ def get(node, prop, kind=None):
     return subprocess.check_output(command, text=True).strip()
 
 
+assert get('/chosen', 'stdout-path') == '/soc/serial@1fbf0000:115200'
+assert get('/soc/serial@1fbf0000', 'clock-frequency', 'u') == '1843200'
+for address in ['9', '10', '11', '12']:
+    assert get('/soc/switch@1fb58000/mdio/ethernet-phy@' + address, 'status') == 'okay'
 assert get('/soc/i2c0@1fbf8000', 'status') == ('okay' if variant == 'probe-only' else 'disabled')
 for node in ['/soc/phy@1faf0000', '/soc/xmac@1fb60000', '/soc/ethernet@1fb50000/ethernet@2']:
     assert get(node, 'status') == 'disabled'
