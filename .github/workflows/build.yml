@@ -67,6 +67,7 @@ jobs:
           key: jcow414-ubuntu24-${{ hashFiles('source.lock.json', 'feeds.lock.json', 'config.seed', 'config.lxc.seed', 'patches/**') }}-${{ inputs.variant }}-${{ github.run_id }}
           restore-keys: |
             jcow414-ubuntu24-${{ hashFiles('source.lock.json', 'feeds.lock.json', 'config.seed', 'config.lxc.seed', 'patches/**') }}-${{ inputs.variant }}-
+            jcow414-ubuntu24-
 
       - name: Build pinned diagnostic firmware
         shell: bash
