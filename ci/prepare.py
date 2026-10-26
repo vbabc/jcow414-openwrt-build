@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 parser = argparse.ArgumentParser()
-parser.add_argument('variant', choices=['baseline', 'probe-only', 'frontend-diag', 'phy-diag'])
+parser.add_argument('variant', choices=['baseline', 'probe-only', 'frontend-diag', 'phy-diag', 'mac-diag'])
 args = parser.parse_args()
 repository = pathlib.Path(__file__).resolve().parent.parent
 build_root = pathlib.Path(os.environ['BUILD_ROOT']).resolve()
@@ -56,23 +56,38 @@ run('python3', str(repository / 'ci/prepare-board.py'), str(source))
 kernel_patches = source / 'target/linux/airoha/patches-6.18'
 shutil.copyfile(repository / 'patches/999-jcow414-require-en7571-calibration.patch', kernel_patches / '999-jcow414-require-en7571-calibration.patch')
 shutil.copyfile(repository / 'patches/1001-led-netdev-guard-unnamed-hw-device.patch', kernel_patches / '1001-led-netdev-guard-unnamed-hw-device.patch')
-if args.variant in ('probe-only', 'frontend-diag', 'phy-diag'):
+if args.variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag'):
     shutil.copyfile(repository / 'patches/1000-en7571-diagnostic-only.patch', kernel_patches / '1000-en7571-diagnostic-only.patch')
     patch = repository / 'patches/jcow414-probe-only-board.patch'
     run('git', 'apply', '--check', str(patch), cwd=source)
     run('git', 'apply', str(patch), cwd=source)
-if args.variant in ('frontend-diag', 'phy-diag'):
+if args.variant in ('frontend-diag', 'phy-diag', 'mac-diag'):
     name = '1002-en7571-frontend-diagnostic-tx-disabled.patch'
     shutil.copyfile(repository / 'patches' / name, kernel_patches / name)
     patch = repository / 'patches/jcow414-frontend-diag-board.patch'
     run('git', 'apply', '--check', str(patch), cwd=source)
     run('git', 'apply', str(patch), cwd=source)
-if args.variant == 'phy-diag':
+if args.variant in ('phy-diag', 'mac-diag'):
     name = '1003-jcow414-tx-inhibited-phy-diagnostic.patch'
     shutil.copyfile(repository / 'patches' / name, kernel_patches / name)
     patch = repository / 'patches/jcow414-phy-diag-board.patch'
     run('git', 'apply', '--check', str(patch), cwd=source)
     run('git', 'apply', str(patch), cwd=source)
+
+if args.variant == 'mac-diag':
+    board = source / 'target/linux/airoha/dts/en7528_jiofiber_jcow414.dts'
+    board.write_text(board.read_text() + (repository / 'ci/mac-diagnostic.dtsi').read_text())
+    defaults = source / 'files/etc/uci-defaults/99-jcow414-mac-diagnostic'
+    defaults.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(repository / 'ci/mac-diagnostic-defaults.sh', defaults)
+    defaults.chmod(0o755)
+    omci = source / 'package/utils/airoha/omci-agent/files/etc/config/omci'
+    text = omci.read_text()
+    assert text.count("option enabled '1'") == 1
+    text = text.replace("option enabled '1'", "option enabled '0'", 1)
+    text = text.replace("option dying_gasp '1'", "option dying_gasp '0'", 1)
+    text = text.replace("option reboot ''", "option reboot '0'", 1)
+    omci.write_text(text)
 
 if args.variant == 'baseline':
     # Preserve the captured configuration, but distinguish the boot fix from
@@ -82,7 +97,7 @@ if args.variant == 'baseline':
     seed = seed.replace('CONFIG_VERSION_NUMBER="pon-dev1"', 'CONFIG_VERSION_NUMBER="pon-dev3"', 1)
 else:
     seed = (repository / 'config.seed').read_text()
-    version = {'probe-only': 'pon-probe-only-3', 'frontend-diag': 'pon-frontend-diag-1', 'phy-diag': 'pon-phy-diag-1'}[args.variant]
+    version = {'probe-only': 'pon-probe-only-3', 'frontend-diag': 'pon-frontend-diag-1', 'phy-diag': 'pon-phy-diag-1', 'mac-diag': 'pon-mac-diag-1'}[args.variant]
     seed += f'CONFIG_VERSION_NUMBER="{version}"\n'
 seed = '\n'.join(line for line in seed.splitlines() if not line.startswith(('CONFIG_CCACHE', 'CONFIG_DEVEL=')) and line not in ('# CONFIG_CCACHE is not set', '# CONFIG_DEVEL is not set')) + '\n'
 # CCACHE has a prompt conditional on DEVEL in the pinned Config-devel.in;
@@ -109,7 +124,12 @@ manifest = {
     'source': lock,
     'build_repository_commit': os.environ.get('GITHUB_SHA', 'local-validation'),
     'firmware_seed_sha256': hashlib.sha256(seed.encode()).hexdigest(),
-    'optical_mac_phy_enabled': False,
+    'optical_mac_phy_enabled': args.variant == 'mac-diag',
+    'digital_phy_enabled': args.variant in ('phy-diag', 'mac-diag'),
+    'optical_mac_probe_enabled': args.variant == 'mac-diag',
+    'gdm2_device_enabled': args.variant == 'mac-diag',
+    'activation_permitted': False,
+    'transmitter_inhibited_diagnostic': args.variant in ('frontend-diag', 'phy-diag', 'mac-diag'),
     'hardware_validated': False,
     'raw_appended_dtb_required': True,
     'patches_sha256': {

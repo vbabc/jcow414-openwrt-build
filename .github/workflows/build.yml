@@ -6,13 +6,14 @@ on:
       variant:
         description: Diagnostic build only; no deployment
         required: true
-        default: phy-diag
+        default: mac-diag
         type: choice
         options:
           - baseline
           - probe-only
           - frontend-diag
           - phy-diag
+          - mac-diag
 
 permissions:
   contents: read

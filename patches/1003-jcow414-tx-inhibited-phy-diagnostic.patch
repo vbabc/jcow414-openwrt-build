@@ -1,5 +1,5 @@
 From: JCOW414 diagnostic build
-Subject: [PATCH] add single-owner TX-inhibited digital PHY diagnostic
+Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
 
 --- a/drivers/net/optical/airoha/en7571_main.c
 +++ b/drivers/net/optical/airoha/en7571_main.c
@@ -290,3 +290,290 @@ Subject: [PATCH] add single-owner TX-inhibited digital PHY diagnostic
  int airoha_xpon_phy_set_tx_calibration_mode(struct phy *phy, bool enable);
  
  #endif /* __LINUX_PHY_AIROHA_XPON_H */
+--- a/drivers/net/ethernet/airoha/airoha_xpon.c
++++ b/drivers/net/ethernet/airoha/airoha_xpon.c
+@@ -59,6 +59,13 @@
+ 	from_timer(var, callback_timer, timer_fieldname)
+ #endif
+ 
++bool airoha_gpon_omci_hw_is_diagnostic(void *hw_priv)
++{
++	struct xpon_priv *priv = hw_priv;
++
++	return priv->control_diagnostic;
++}
++
+ static const u8 airoha_default_vendor_id[4] = {'M', 'T', 'K', 'G'};
+ 
+ static inline u32 gpon_read(struct xpon_priv *priv, u32 reg);
+@@ -112,6 +119,9 @@
+ static int airoha_xpon_tx_enable(struct xpon_priv *priv, bool enable)
+ {
+ 	int ret;
++
++	if (priv->control_diagnostic && enable)
++		return -EPERM;
+ 
+ 	/*
+ 	 * The vendor phy_trans_power_switch() controls the board TX_DISABLE
+@@ -548,6 +558,9 @@
+ 
+ static int gpon_set_fe_datapath(struct xpon_priv *priv, bool enable)
+ {
++
++	if (priv->control_diagnostic && enable)
++		return -EPERM;
+ 	return airoha_xpon_set_fe_datapath(priv->dev, priv->gdm_dev,
+ 					  AIROHA_XPON_MODE_GPON, enable);
+ }
+@@ -1171,6 +1184,9 @@
+ 	u8 type = msg->value[0] >> 16;
+ 	bool ready, los;
+ 	int ret, t;
++
++	if (priv->control_diagnostic)
++		return;
+ 
+ 	if (type != PLOAM_UP_DYING_GASP) {
+ 		ret = airoha_xpon_phy_get_link_state(priv->phy, &ready, &los);
+@@ -1881,6 +1897,16 @@
+ {
+ 	struct xpon_priv *priv = hw_priv;
+ 
++	if (priv->control_diagnostic) {
++		if (identity) {
++			priv->identity = *identity;
++			memcpy(priv->hw_sn, identity->serial_number, sizeof(priv->hw_sn));
++			memcpy(priv->hw_passwd, identity->password, sizeof(priv->hw_passwd));
++			ploam_set_identity(priv->ploam, priv->hw_sn, priv->hw_passwd);
++		}
++		return;
++	}
++
+ 	if (!identity)
+ 		return;
+ 
+@@ -1948,6 +1974,9 @@
+ 	unsigned int channel = 0;
+ 	int ret;
+ 
++	if (priv->control_diagnostic)
++		return -EPERM;
++
+ 	ret = gpon_set_omci_tcont_hw(priv, entity_id, alloc_id, valid,
+ 				     &channel);
+ 	if (ret) {
+@@ -1972,6 +2001,9 @@
+ 	struct xpon_priv *priv = hw_priv;
+ 	int ret;
+ 
++	if (priv->control_diagnostic)
++		return -EPERM;
++
+ 	/*
+ 	 * The OLT may announce encryption with Encrypted_Port-ID before OMCI
+ 	 * creates the GEM port, as Nokia/ALCL OLTs do. Keep it when OMCI then
+@@ -2000,6 +2032,9 @@
+ 	struct airoha_xpon_service_cfg cfg;
+ 	unsigned int tcont_index;
+ 	int ret;
++
++	if (priv->control_diagnostic)
++		return -EPERM;
+ 
+ 	if (!service || service->multicast || service->vlan_treatment_valid ||
+ 	    service->direction == OMCI_GEM_PORT_DIRECTION_ANI_TO_UNI)
+@@ -2077,6 +2112,9 @@
+ {
+ 	struct xpon_priv *priv = hw_priv;
+ 	u16 gem_port_id;
++
++	if (priv->control_diagnostic)
++		return -EPERM;
+ 
+ 	if (!airoha_eth_xpon_del_service(priv->gdm_dev, cookie,
+ 					  &gem_port_id))
+@@ -2378,6 +2416,9 @@
+ 	u32 fifo_depth, irq_mask, known, pending, unknown, wan_conf;
+ 	int ret;
+ 
++	if (priv->control_diagnostic)
++		return -EPERM;
++
+ 	if (READ_ONCE(priv->mac_enabled))
+ 		return 0;
+ 
+@@ -2970,6 +3011,9 @@
+ {
+ 	struct xpon_priv *priv = hw_priv;
+ 	int ret = 0;
++
++	if (priv->control_diagnostic)
++		return -EPERM;
+ 
+ 	if (READ_ONCE(priv->started))
+ 		return 0;
+@@ -3267,6 +3311,9 @@
+ {
+ 	struct xpon_priv *priv = data;
+ 
++	if (priv->control_diagnostic)
++		return -EPERM;
++
+ 	/* net/omci owns GPON activation; ndo_open only exposes saved carrier. */
+ 	gpon_refresh_netdev_link(priv, true);
+ 	return 0;
+@@ -3794,6 +3841,9 @@
+ {
+ 	int idx, ret;
+ 	u32 int_en;
++
++	if (priv->control_diagnostic)
++		return -EPERM;
+ 
+ 	if (READ_ONCE(priv->mac_enabled))
+ 		return 0;
+@@ -4033,6 +4083,9 @@
+ 	struct xpon_priv *priv = data;
+ 	int ret = 0;
+ 
++	if (priv->control_diagnostic)
++		return -EPERM;
++
+ 	if (READ_ONCE(priv->started))
+ 		return 0;
+ 	WRITE_ONCE(priv->started, true);
+@@ -4303,6 +4356,11 @@
+ 	 */
+ 	airoha_gpon_omci_set_state(&priv->omci, GPON_O1_INITIAL);
+ 	dev_info(priv->dev, "EN7528 test: starting OMCI transport\n");
++	if (priv->control_diagnostic) {
++		dev_info(priv->dev, "MAC/OMCI control diagnostic registered; activation blocked\n");
++		return 0;
++	}
++
+ 	ret = airoha_gpon_omci_start(&priv->omci);
+ 	dev_info(priv->dev, "EN7528 test: OMCI start returned %d\n", ret);
+ 	if (ret)
+@@ -4325,6 +4383,32 @@
+ 	airoha_eth_unregister_xpon_oam(priv->gdm_dev, &priv->omci_handler);
+ 	airoha_gpon_omci_unregister(&priv->omci);
+ }
++
++static ssize_t control_diagnostic_state_show(struct device *dev,
++                                             struct device_attribute *attr,
++                                             char *buf)
++{
++	struct xpon_priv *priv = dev_get_drvdata(dev);
++	int inhibit;
++
++	if (!priv || !priv->control_diagnostic)
++		return -EOPNOTSUPP;
++	inhibit = airoha_xpon_phy_tx_inhibited(priv->phy);
++	if (inhibit < 0)
++		return inhibit;
++	return sysfs_emit(buf,
++		"diagnostic=1 tx_disabled=%d started=%u mac_enabled=%u int_enable=%#x\n",
++		inhibit, READ_ONCE(priv->started), READ_ONCE(priv->mac_enabled),
++		gpon_read(priv, GPON_INT_ENABLE));
++}
++static DEVICE_ATTR_RO(control_diagnostic_state);
++static struct attribute *control_diagnostic_attrs[] = {
++	&dev_attr_control_diagnostic_state.attr,
++	NULL,
++};
++static const struct attribute_group control_diagnostic_group = {
++	.attrs = control_diagnostic_attrs,
++};
+ 
+ static int airoha_xpon_probe(struct platform_device *pdev)
+ {
+@@ -4348,6 +4432,10 @@
+ 	priv->dev = dev;
+ 	priv->match_data = data;
+ 	priv->mode = AIROHA_XPON_MODE_GPON;
++	priv->control_diagnostic =
++		device_property_read_bool(dev, "airoha,control-diagnostic");
++	if (priv->control_diagnostic && data->version != econet_en7528)
++		return -EINVAL;
+ 	INIT_DELAYED_WORK(&priv->phy_link_work,
+ 			  airoha_xpon_phy_link_work_fn);
+ 
+@@ -4377,6 +4465,15 @@
+ 		ret = dev_err_probe(dev, PTR_ERR(priv->phy),
+ 				    "failed to get digital xPON PHY\n");
+ 		goto err_put_gdm;
++	}
++
++	if (priv->control_diagnostic) {
++		ret = airoha_xpon_phy_tx_inhibited(priv->phy);
++		if (ret != 1) {
++			ret = dev_err_probe(dev, ret < 0 ? ret : -EIO,
++					    "control diagnostic requires inhibited PHY\n");
++			goto err_put_gdm;
++		}
+ 	}
+ 
+ 	eth_node = of_parse_phandle(dev->of_node, "ethernet", 0);
+@@ -4531,6 +4628,19 @@
+ 	}
+ 
+ 	platform_set_drvdata(pdev, priv);
++	if (priv->control_diagnostic) {
++		ret = airoha_xpon_phy_tx_inhibited(priv->phy);
++		if (ret != 1) {
++			airoha_xpon_unregister_gpon_omci(priv);
++			ret = ret < 0 ? ret : -EIO;
++			goto err_unregister_xpon;
++		}
++		ret = devm_device_add_group(dev, &control_diagnostic_group);
++		if (ret) {
++			airoha_xpon_unregister_gpon_omci(priv);
++			goto err_unregister_xpon;
++		}
++	}
+ 	if (airoha_xpon_is_gpon(priv)) {
+ 		ret = devm_device_add_group(dev, &gpon_bip_group);
+ 		if (ret)
+--- a/drivers/net/ethernet/airoha/airoha_xpon.h
++++ b/drivers/net/ethernet/airoha/airoha_xpon.h
+@@ -383,6 +383,7 @@
+ 	bool			phy_initialized;
+ 	bool			phy_powered;
+ 	struct net_device	*gdm_dev;
++	bool			control_diagnostic;
+ 	bool			started;
+ 	bool			optical_active;
+ 	bool			mac_enabled;
+--- a/drivers/net/ethernet/airoha/airoha_gpon_omci.c
++++ b/drivers/net/ethernet/airoha/airoha_gpon_omci.c
+@@ -17,6 +17,9 @@
+ 	struct airoha_gpon_omci *omci = omci_device_priv(odev);
+ 	int ret;
+ 
++	if (airoha_gpon_omci_hw_is_diagnostic(omci->hw_priv))
++		return -EPERM;
++
+ 	ret = airoha_eth_xpon_control_start(omci->gdm_dev);
+ 	if (ret)
+ 		return ret;
+@@ -40,6 +43,9 @@
+ 				 struct sk_buff *skb, u16 gem_port_id)
+ {
+ 	struct airoha_gpon_omci *omci = omci_device_priv(odev);
++
++	if (airoha_gpon_omci_hw_is_diagnostic(omci->hw_priv))
++		return -EPERM;
+ 
+ 	return airoha_eth_xmit_xpon_oam(omci->gdm_dev, skb, 0, gem_port_id);
+ }
+--- a/drivers/net/ethernet/airoha/airoha_gpon_omci.h
++++ b/drivers/net/ethernet/airoha/airoha_gpon_omci.h
+@@ -41,6 +41,7 @@
+ 
+ int airoha_gpon_omci_hw_get_ani_topology(void *hw_priv,
+ 					 struct omci_ani_topology *topology);
++bool airoha_gpon_omci_hw_is_diagnostic(void *hw_priv);
+ int airoha_gpon_omci_hw_start(void *hw_priv);
+ void airoha_gpon_omci_hw_stop(void *hw_priv);
+ int airoha_gpon_omci_hw_set_tcont(void *hw_priv, u16 entity_id,

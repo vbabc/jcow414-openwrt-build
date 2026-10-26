@@ -34,7 +34,11 @@ def driver_only_patch(text):
     return bool(paths) and all(path.startswith(('drivers/net/optical/airoha/', 'target/linux/airoha/dts/'))
                                or path in ('drivers/leds/trigger/ledtrig-netdev.c',
                                            'drivers/phy/airoha/phy-airoha-xpon.c',
-                                           'include/linux/phy/phy-airoha-xpon.h') for path in paths)
+                                           'include/linux/phy/phy-airoha-xpon.h',
+                                           'drivers/net/ethernet/airoha/airoha_xpon.c',
+                                           'drivers/net/ethernet/airoha/airoha_xpon.h',
+                                           'drivers/net/ethernet/airoha/airoha_gpon_omci.c',
+                                           'drivers/net/ethernet/airoha/airoha_gpon_omci.h') for path in paths)
 
 
 def safe_member(name):

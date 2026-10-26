@@ -24,12 +24,12 @@ assert guard in driver, 'Prepared driver does not contain the tested guard body'
 probe = driver[driver.index('static int en7571_probe('):driver.index('static void en7571_remove(')]
 assert probe.index('en7571_factory_calibration_ready') < probe.index('ret = en7571_init(')
 variant = os.environ['VARIANT']
-if variant in ('probe-only', 'frontend-diag', 'phy-diag'):
+if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag'):
     assert probe.index('"airoha,diagnostic-only"') < probe.index('ret = en7571_init(')
     assert 'return 0;' in probe[probe.index('"airoha,diagnostic-only"'):probe.index('ret = en7571_init(')]
 if variant == 'frontend-diag':
     subprocess.run(['python3', str(repository / 'ci/validate-frontend.py'), str(kernel / 'drivers/net/optical/airoha/en7571_main.c')], check=True)
-if variant == 'phy-diag':
+if variant in ('phy-diag', 'mac-diag'):
     subprocess.run(['python3', str(repository / 'ci/validate-phy.py'), str(kernel)], check=True)
     subprocess.run(['python3', str(repository / 'tests/test-phy-inhibit.py'), str(kernel)], check=True)
 preprocessed = artifacts / 'diagnostic.preprocessed.dts'
@@ -52,11 +52,11 @@ assert get('/soc/serial@1fbf0000', 'clock-frequency', 'u') == '1843200'
 for address in ['9', '10', '11', '12']:
     assert get('/soc/switch@1fb58000/mdio/ethernet-phy@' + address, 'status') == 'okay'
 assert get('/soc/i2c0@1fbf8000', 'status') == ('disabled' if variant == 'baseline' else 'okay')
-assert get('/soc/phy@1faf0000', 'status') == ('okay' if variant == 'phy-diag' else 'disabled')
+assert get('/soc/phy@1faf0000', 'status') == ('okay' if variant in ('phy-diag', 'mac-diag') else 'disabled')
 for node in ['/soc/xmac@1fb60000', '/soc/ethernet@1fb50000/ethernet@2']:
-    assert get(node, 'status') == 'disabled'
+    assert get(node, 'status') == ('okay' if variant == 'mac-diag' else 'disabled')
 assert get('/soc/spi@1fa10000/flash@0/partitions/partition@ddc0000/nvmem-layout/calibration@140477', 'reg', 'x') == '140477 e1'
-if variant in ('probe-only', 'frontend-diag', 'phy-diag'):
+if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag'):
     assert get('/soc/i2c0@1fbf8000/lddla@70', 'compatible') == 'airoha,en7571'
     assert get('/soc/i2c0@1fbf8000/lddla@70', 'nvmem-cell-names') == 'calibration'
     node = '/soc/i2c0@1fbf8000/lddla@70'
@@ -80,3 +80,19 @@ if variant in ('probe-only', 'frontend-diag', 'phy-diag'):
         assert get(phy, 'reg', 'x') == '1faf0000 600'
         assert get(phy, 'tx-disable-gpios', 'u').split() == [get('/soc/system-controller@1fbf0200/pinctrl', 'phandle', 'u'), '16', '0']
 print('Applied calibration guard and diagnostic DTB verified:', variant)
+
+if variant == 'mac-diag':
+    subprocess.run(['python3', str(repository / 'ci/validate-mac.py'), str(kernel)], check=True)
+    subprocess.run(['python3', str(repository / 'tests/test-mac-inhibit.py'), str(kernel)], check=True)
+    mac = '/soc/xmac@1fb60000'
+    get(mac, 'airoha,control-diagnostic')
+    assert get(mac, 'optical-frontends', 'u') == get(node, 'phandle', 'u')
+    assert get(mac, 'optical-frontend-names') == 'pon'
+    assert get(node, '#optical-frontend-cells', 'u') == '0'
+    assert get(mac, 'reg', 'x') == '1fb60000 10000 1fa2ff24 4'
+    assert get(mac, 'ethernet', 'u') == get('/soc/ethernet@1fb50000/ethernet@2', 'phandle', 'u')
+    agent = (source / 'package/utils/airoha/omci-agent/files/etc/config/omci').read_text()
+    assert "option enabled '0'" in agent and "option dying_gasp '0'" in agent
+    assert "option reboot '0'" in agent
+    defaults = (source / 'files/etc/uci-defaults/99-jcow414-mac-diagnostic').read_text()
+    assert 'delete network.wan' in defaults and "dhcp.lan.ignore='1'" in defaults

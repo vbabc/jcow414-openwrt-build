@@ -1,0 +1,14 @@
+
+/* Registration only; requires diagnostic guards in MAC and OMCI transport. */
+&jcow414_en7571 {
+	#optical-frontend-cells = <0>;
+};
+&xpon {
+	airoha,control-diagnostic;
+	optical-frontends = <&jcow414_en7571>;
+	optical-frontend-names = "pon";
+	status = "okay";
+};
+&gdm2 {
+	status = "okay";
+};

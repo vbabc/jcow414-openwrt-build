@@ -26,6 +26,13 @@ class CacheTests(unittest.TestCase):
         self.assertTrue(cache.driver_only_patch('--- a/drivers/net/optical/airoha/en7571_main.c\n+++ b/drivers/net/optical/airoha/en7571_main.c\n'))
         self.assertFalse(cache.driver_only_patch('--- a/include/linux/test.h\n+++ /dev/null\n--- /dev/null\n+++ b/drivers/net/optical/airoha/test.c\n'))
 
+    def test_only_internal_mac_driver_paths_are_reusable(self):
+        for name in ('airoha_xpon.c', 'airoha_xpon.h', 'airoha_gpon_omci.c', 'airoha_gpon_omci.h'):
+            path = 'drivers/net/ethernet/airoha/' + name
+            self.assertTrue(cache.driver_only_patch('--- a/' + path + '\n+++ b/' + path + '\n'))
+        for path in ('include/uapi/linux/test.h', 'include/net/xpon/omci.h', 'drivers/net/ethernet/airoha/airoha_eth.h'):
+            self.assertFalse(cache.driver_only_patch('--- a/' + path + '\n+++ b/' + path + '\n'))
+
     def test_archive_whitelist(self):
         for name in ('staging_dir/host/bin/tool', 'build_dir/toolchain-mips/gcc/.built'):
             self.assertTrue(cache.safe_member(name))
