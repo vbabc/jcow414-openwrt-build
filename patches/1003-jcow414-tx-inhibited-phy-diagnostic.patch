@@ -215,7 +215,7 @@ Subject: [PATCH] add single-owner TX-inhibited digital PHY diagnostic
  	return 0;
  
  err_power:
-@@ -1225,6 +1258,32 @@
+@@ -1225,6 +1258,34 @@
  	return invert;
  }
  
@@ -243,12 +243,14 @@ Subject: [PATCH] add single-owner TX-inhibited digital PHY diagnostic
 +	&dev_attr_diagnostic_state.attr,
 +	NULL,
 +};
-+ATTRIBUTE_GROUPS(airoha_xpon_diag);
++static const struct attribute_group airoha_xpon_diag_group = {
++	.attrs = airoha_xpon_diag_attrs,
++};
 +
  static int airoha_xpon_phy_probe(struct platform_device *pdev)
  {
  	struct device *dev = &pdev->dev;
-@@ -1233,6 +1292,7 @@
+@@ -1233,6 +1294,7 @@
  	struct airoha_xpon_phy *priv;
  	struct resource *res;
  	struct phy *phy;
@@ -256,7 +258,7 @@ Subject: [PATCH] add single-owner TX-inhibited digital PHY diagnostic
  
  	soc = device_get_match_data(dev);
  	if (!soc)
-@@ -1244,6 +1304,8 @@
+@@ -1244,6 +1306,8 @@
  
  	priv->dev = dev;
  	priv->soc = soc;
@@ -265,12 +267,12 @@ Subject: [PATCH] add single-owner TX-inhibited digital PHY diagnostic
  	priv->submode = AIROHA_XPON_PHY_SUBMODE_GPON;
  	priv->trans_invert = airoha_xpon_phy_trans_invert(dev);
  	spin_lock_init(&priv->counter_lock);
-@@ -1303,6 +1365,11 @@
+@@ -1303,6 +1367,11 @@
  		return dev_err_probe(dev, PTR_ERR(provider),
  				     "failed to register xPON PHY provider\n");
  
 +	if (priv->tx_inhibited_diagnostic) {
-+		ret = devm_device_add_groups(dev, airoha_xpon_diag_groups);
++		ret = devm_device_add_group(dev, &airoha_xpon_diag_group);
 +		if (ret)
 +			return ret;
 +	}

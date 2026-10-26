@@ -40,3 +40,8 @@ assert 'else\n\t\tmod_delayed_work' in power
 assert 'static DEVICE_ATTR_RO(diagnostic_state)' in phy
 assert 'int airoha_xpon_phy_tx_inhibited(struct phy *phy);' in api
 print('Single GPIO owner, client admission/cleanup, TX guards and read-only PHY status verified')
+
+# Linux 6.18 offers the managed single-group helper, not a plural helper.
+assert "devm_device_add_groups(" not in phy
+assert "devm_device_add_group(dev, &airoha_xpon_diag_group)" in phy
+assert "static const struct attribute_group airoha_xpon_diag_group" in phy
