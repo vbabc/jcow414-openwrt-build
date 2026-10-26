@@ -24,9 +24,11 @@ assert guard in driver, 'Prepared driver does not contain the tested guard body'
 probe = driver[driver.index('static int en7571_probe('):driver.index('static void en7571_remove(')]
 assert probe.index('en7571_factory_calibration_ready') < probe.index('ret = en7571_init(')
 variant = os.environ['VARIANT']
-if variant == 'probe-only':
+if variant in ('probe-only', 'frontend-diag'):
     assert probe.index('"airoha,diagnostic-only"') < probe.index('ret = en7571_init(')
     assert 'return 0;' in probe[probe.index('"airoha,diagnostic-only"'):probe.index('ret = en7571_init(')]
+if variant == 'frontend-diag':
+    subprocess.run(['python3', str(repository / 'ci/validate-frontend.py'), str(kernel / 'drivers/net/optical/airoha/en7571_main.c')], check=True)
 preprocessed = artifacts / 'diagnostic.preprocessed.dts'
 with preprocessed.open('w') as output:
     subprocess.run(['cpp', '-nostdinc', '-undef', '-D__DTS__', '-x', 'assembler-with-cpp',
@@ -46,12 +48,20 @@ assert get('/chosen', 'stdout-path') == '/soc/serial@1fbf0000:115200'
 assert get('/soc/serial@1fbf0000', 'clock-frequency', 'u') == '1843200'
 for address in ['9', '10', '11', '12']:
     assert get('/soc/switch@1fb58000/mdio/ethernet-phy@' + address, 'status') == 'okay'
-assert get('/soc/i2c0@1fbf8000', 'status') == ('okay' if variant == 'probe-only' else 'disabled')
+assert get('/soc/i2c0@1fbf8000', 'status') == ('disabled' if variant == 'baseline' else 'okay')
 for node in ['/soc/phy@1faf0000', '/soc/xmac@1fb60000', '/soc/ethernet@1fb50000/ethernet@2']:
     assert get(node, 'status') == 'disabled'
 assert get('/soc/spi@1fa10000/flash@0/partitions/partition@ddc0000/nvmem-layout/calibration@140477', 'reg', 'x') == '140477 e1'
-if variant == 'probe-only':
+if variant in ('probe-only', 'frontend-diag'):
     assert get('/soc/i2c0@1fbf8000/lddla@70', 'compatible') == 'airoha,en7571'
     assert get('/soc/i2c0@1fbf8000/lddla@70', 'nvmem-cell-names') == 'calibration'
-    get('/soc/i2c0@1fbf8000/lddla@70', 'airoha,diagnostic-only')
+    node = '/soc/i2c0@1fbf8000/lddla@70'
+    if variant == 'probe-only':
+        get(node, 'airoha,diagnostic-only')
+    else:
+        properties = subprocess.check_output(['fdtget', '-p', str(dtb), node], text=True).splitlines()
+        assert 'airoha,diagnostic-only' not in properties
+        get(node, 'airoha,frontend-diagnostic')
+        cells = get(node, 'tx-disable-gpios', 'u').split()
+        assert cells == [get('/soc/system-controller@1fbf0200/pinctrl', 'phandle', 'u'), '16', '0'], cells
 print('Applied calibration guard and diagnostic DTB verified:', variant)

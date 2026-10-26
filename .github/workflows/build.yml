@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: Diagnostic variant (neither enables GPON service)
+        description: Diagnostic variant (GPON service remains disabled)
         required: true
         default: baseline
         type: choice
         options:
           - baseline
           - probe-only
+          - frontend-diag
 
 permissions:
   contents: read

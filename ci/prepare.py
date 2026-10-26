@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 parser = argparse.ArgumentParser()
-parser.add_argument('variant', choices=['baseline', 'probe-only'])
+parser.add_argument('variant', choices=['baseline', 'probe-only', 'frontend-diag'])
 args = parser.parse_args()
 repository = pathlib.Path(__file__).resolve().parent.parent
 build_root = pathlib.Path(os.environ['BUILD_ROOT']).resolve()
@@ -56,9 +56,15 @@ run('python3', str(repository / 'ci/prepare-board.py'), str(source))
 kernel_patches = source / 'target/linux/airoha/patches-6.18'
 shutil.copyfile(repository / 'patches/999-jcow414-require-en7571-calibration.patch', kernel_patches / '999-jcow414-require-en7571-calibration.patch')
 shutil.copyfile(repository / 'patches/1001-led-netdev-guard-unnamed-hw-device.patch', kernel_patches / '1001-led-netdev-guard-unnamed-hw-device.patch')
-if args.variant == 'probe-only':
+if args.variant in ('probe-only', 'frontend-diag'):
     shutil.copyfile(repository / 'patches/1000-en7571-diagnostic-only.patch', kernel_patches / '1000-en7571-diagnostic-only.patch')
     patch = repository / 'patches/jcow414-probe-only-board.patch'
+    run('git', 'apply', '--check', str(patch), cwd=source)
+    run('git', 'apply', str(patch), cwd=source)
+if args.variant == 'frontend-diag':
+    name = '1002-en7571-frontend-diagnostic-tx-disabled.patch'
+    shutil.copyfile(repository / 'patches' / name, kernel_patches / name)
+    patch = repository / 'patches/jcow414-frontend-diag-board.patch'
     run('git', 'apply', '--check', str(patch), cwd=source)
     run('git', 'apply', str(patch), cwd=source)
 
@@ -70,7 +76,8 @@ if args.variant == 'baseline':
     seed = seed.replace('CONFIG_VERSION_NUMBER="pon-dev1"', 'CONFIG_VERSION_NUMBER="pon-dev3"', 1)
 else:
     seed = (repository / 'config.seed').read_text()
-    seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-3"\n'
+    version = {'probe-only': 'pon-probe-only-3', 'frontend-diag': 'pon-frontend-diag-1'}[args.variant]
+    seed += f'CONFIG_VERSION_NUMBER="{version}"\n'
 seed = '\n'.join(line for line in seed.splitlines() if not line.startswith(('CONFIG_CCACHE', 'CONFIG_DEVEL=')) and line not in ('# CONFIG_CCACHE is not set', '# CONFIG_DEVEL is not set')) + '\n'
 # CCACHE has a prompt conditional on DEVEL in the pinned Config-devel.in;
 # without DEVEL the user value is hidden and defconfig clears it.

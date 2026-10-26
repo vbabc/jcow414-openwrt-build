@@ -1,0 +1,13 @@
+--- a/target/linux/airoha/dts/en7528_jiofiber_jcow414.dts
++++ b/target/linux/airoha/dts/en7528_jiofiber_jcow414.dts
+@@ -212,3 +212,10 @@
+ &xpon_phy { status = "disabled"; };
+ &xpon { status = "disabled"; };
+ &gdm2 { status = "disabled"; };
++
++/* Requires 1002: hold stock board TX-disable high before frontend init. */
++&jcow414_en7571 {
++	/delete-property/ airoha,diagnostic-only;
++	airoha,frontend-diagnostic;
++	tx-disable-gpios = <&pinctrl 16 GPIO_ACTIVE_HIGH>;
++};

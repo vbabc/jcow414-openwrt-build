@@ -1,0 +1,90 @@
+From: JCOW414 diagnostic build
+Subject: [PATCH] en7571: add TX-inhibited frontend diagnostic mode
+
+Require and read back the board TX-disable GPIO before chip initialization.
+Expose receiver/temperature/voltage telemetry only; skip debug controls and
+the periodic control worker. The board must keep optical MAC/PHY disabled.
+
+--- a/drivers/net/optical/airoha/en7571_main.c
++++ b/drivers/net/optical/airoha/en7571_main.c
+@@ -15,6 +15,7 @@
+  */
+ #include <linux/delay.h>
+ #include <linux/err.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/mod_devicetable.h>
+ #include <linux/module.h>
+@@ -464,6 +465,22 @@
+ /* Probe / remove						      */
+ /* ------------------------------------------------------------------ */
+ 
++/* Read-only telemetry surface for the transmitter-inhibited bench test. */
++static const struct airoha_lddla_ops en7571_frontend_diag_ops = {
++	.name = "en7571-frontend-diag",
++	.part_number = "EN7571-LDDLA",
++	.serial = "EN7571SN00000001",
++	.date_code = "260609",
++	.protocols = OPTICAL_FRONTEND_PROTO_GPON,
++	.thresholds = &airoha_lddla_default_thresholds,
++	.bob_size_min = AIROHA_LDDLA_BOB_MIN_SIZE,
++	.bob_size_max = AIROHA_LDDLA_BOB_MAX_SIZE,
++	.temp_refresh = en7571_op_temp,
++	.bosa_temp_refresh = en7571_op_bosa_temp,
++	.vcc_refresh = en7571_op_vcc,
++	.rx_power_refresh = en7571_op_rx_power,
++};
++
+ static void en7571_set_defaults(struct en7571_priv *priv)
+ {
+ 	priv->lddla.pon_mode = EN7571_PON_UNKNOWN;
+@@ -519,6 +536,8 @@
+ {
+ 	struct device *dev = &client->dev;
+ 	struct en7571_priv *priv;
++	struct gpio_desc *tx_disable = NULL;
++	bool frontend_diag;
+ 	int ret;
+ 
+ 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
+@@ -569,15 +588,40 @@
+ 		return 0;
+ 	}
+ 
++	frontend_diag = device_property_read_bool(dev, "airoha,frontend-diagnostic");
++	if (frontend_diag) {
++		/* Request a real, active-high board disable before any chip init. */
++		tx_disable = devm_gpiod_get(dev, "tx-disable", GPIOD_OUT_HIGH);
++		if (IS_ERR(tx_disable))
++			return dev_err_probe(dev, PTR_ERR(tx_disable),
++					     "TX-disable GPIO is required for frontend diagnostics\n");
++		if (gpiod_get_value_cansleep(tx_disable) != 1)
++			return dev_err_probe(dev, -EIO,
++					     "TX-disable GPIO is not asserted\n");
++	}
++
+ 	mutex_lock(&priv->lddla.lock);
+ 	ret = en7571_init(priv);
+ 	mutex_unlock(&priv->lddla.lock);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "device init failed\n");
+ 
++	if (frontend_diag) {
++		if (gpiod_get_value_cansleep(tx_disable) != 1)
++			return dev_err_probe(dev, -EIO,
++					     "TX-disable GPIO lost after initialization\n");
++		priv->lddla.ops = &en7571_frontend_diag_ops;
++	}
++
+ 	ret = lddla_frontend_register(&priv->lddla);
+ 	if (ret)
+ 		return ret;
++
++	if (frontend_diag) {
++		dev_info(dev,
++			 "EN7571 frontend diagnostic; TX-disable held; no control worker or TX controls\n");
++		return 0;
++	}
+ 
+ 	lddla_debugfs_init(&priv->lddla);
+ 
