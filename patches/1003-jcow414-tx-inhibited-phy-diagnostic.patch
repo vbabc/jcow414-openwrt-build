@@ -1,5 +1,5 @@
 From: JCOW414 diagnostic build
-Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
+Subject: [PATCH] add TX-inhibited PHY MAC and passive RX diagnostics
 
 --- a/drivers/net/optical/airoha/en7571_main.c
 +++ b/drivers/net/optical/airoha/en7571_main.c
@@ -443,22 +443,82 @@ Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
  	if (READ_ONCE(priv->started))
  		return 0;
  	WRITE_ONCE(priv->started, true);
-@@ -4303,6 +4356,11 @@
+@@ -4302,6 +4355,11 @@
+ 	 * PLOAM state callback so userspace never observes an invalid O0.
  	 */
  	airoha_gpon_omci_set_state(&priv->omci, GPON_O1_INITIAL);
- 	dev_info(priv->dev, "EN7528 test: starting OMCI transport\n");
 +	if (priv->control_diagnostic) {
 +		dev_info(priv->dev, "MAC/OMCI control diagnostic registered; activation blocked\n");
 +		return 0;
 +	}
 +
+ 	dev_info(priv->dev, "EN7528 test: starting OMCI transport\n");
  	ret = airoha_gpon_omci_start(&priv->omci);
  	dev_info(priv->dev, "EN7528 test: OMCI start returned %d\n", ret);
- 	if (ret)
-@@ -4325,6 +4383,32 @@
+@@ -4325,6 +4383,111 @@
  	airoha_eth_unregister_xpon_oam(priv->gdm_dev, &priv->omci_handler);
  	airoha_gpon_omci_unregister(&priv->omci);
  }
++
++/* No normal activation, FE channel enable, TX calibration or IRQ unmasking. */
++static void gpon_rx_diagnostic_stop(struct xpon_priv *priv)
++{
++	gpon_write(priv, GPON_INT_ENABLE, 0);
++	gpon_set_bits(priv, GPON_MBI_MPI_STOP,
++		      MBI_RX_STOP | MBI_TX_STOP | MPI_RX_STOP | MPI_TX_STOP);
++	WRITE_ONCE(priv->rx_diagnostic_started, false);
++}
++
++static int gpon_rx_diagnostic_start(struct xpon_priv *priv)
++{
++	u32 val;
++	int ret;
++
++	if (!priv->control_diagnostic || !priv->rx_diagnostic)
++		return -EOPNOTSUPP;
++	ret = airoha_xpon_phy_tx_inhibited(priv->phy);
++	if (ret != 1)
++		return ret < 0 ? ret : -EIO;
++
++	gpon_write(priv, GPON_INT_ENABLE, 0);
++	ret = airoha_xpon_reset_mac(priv);
++	if (ret)
++		goto stop;
++	gpon_write(priv, GPON_INT_ENABLE, 0);
++	gpon_write(priv, GPON_INT_STATUS, ~0U);
++	ret = airoha_xpon_phy_tx_inhibited(priv->phy);
++	if (ret != 1) {
++		ret = ret < 0 ? ret : -EIO;
++		goto stop;
++	}
++	ret = gpon_dev_init(priv);
++	if (ret)
++		goto stop;
++
++	/* Release receive requests only. Keep both transmit requests stopped. */
++	gpon_rmw(priv, GPON_MBI_MPI_STOP,
++		 MBI_RX_STOP | MBI_TX_STOP | MPI_RX_STOP | MPI_TX_STOP,
++		 MBI_TX_STOP | MPI_TX_STOP);
++	mdelay(1);
++	ret = readl_poll_timeout_atomic(priv->gpon_reg + GPON_MBI_MPI_STOP,
++		val,
++		(val & (MBI_RX_STOP | MBI_TX_STOP | MPI_RX_STOP | MPI_TX_STOP |
++			MPI_TX_STOP_DONE)) ==
++		 (MBI_TX_STOP | MPI_TX_STOP | MPI_TX_STOP_DONE),
++		1, 200);
++	if (ret)
++		goto stop;
++	ret = airoha_xpon_phy_tx_inhibited(priv->phy);
++	if (ret != 1) {
++		ret = ret < 0 ? ret : -EIO;
++		goto stop;
++	}
++	WRITE_ONCE(priv->rx_diagnostic_started, true);
++	return 0;
++stop:
++	gpon_rx_diagnostic_stop(priv);
++	return ret;
++}
 +
 +static ssize_t control_diagnostic_state_show(struct device *dev,
 +                                             struct device_attribute *attr,
@@ -478,8 +538,27 @@ Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
 +		gpon_read(priv, GPON_INT_ENABLE));
 +}
 +static DEVICE_ATTR_RO(control_diagnostic_state);
++static ssize_t rx_diagnostic_state_show(struct device *dev,
++                                       struct device_attribute *attr, char *buf)
++{
++	struct xpon_priv *priv = dev_get_drvdata(dev);
++
++	if (!priv || !priv->control_diagnostic || !priv->rx_diagnostic)
++		return -EOPNOTSUPP;
++	return sysfs_emit(buf,
++		"requested=1 rx_started=%u result=%d mbi=%#x activation=%#x int_enable=%#x int_status=%#x fifo_used=%u rx_gtc=%u\n",
++		READ_ONCE(priv->rx_diagnostic_started), priv->rx_diagnostic_result,
++		gpon_read(priv, GPON_MBI_MPI_STOP),
++		gpon_read(priv, GPON_ACTIVATION_ST),
++		gpon_read(priv, GPON_INT_ENABLE),
++		gpon_read(priv, GPON_INT_STATUS),
++		gpon_read(priv, GPON_PLOAMd_FIFO_STS) & PLOAMd_FIFO_USED_MASK,
++		gpon_read(priv, GPON_DBG_RX_GTC_CNT));
++}
++static DEVICE_ATTR_RO(rx_diagnostic_state);
 +static struct attribute *control_diagnostic_attrs[] = {
 +	&dev_attr_control_diagnostic_state.attr,
++	&dev_attr_rx_diagnostic_state.attr,
 +	NULL,
 +};
 +static const struct attribute_group control_diagnostic_group = {
@@ -488,18 +567,22 @@ Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
  
  static int airoha_xpon_probe(struct platform_device *pdev)
  {
-@@ -4348,6 +4432,10 @@
+@@ -4348,6 +4511,14 @@
  	priv->dev = dev;
  	priv->match_data = data;
  	priv->mode = AIROHA_XPON_MODE_GPON;
 +	priv->control_diagnostic =
 +		device_property_read_bool(dev, "airoha,control-diagnostic");
++	priv->rx_diagnostic =
++		device_property_read_bool(dev, "airoha,rx-diagnostic");
++	if (priv->rx_diagnostic && !priv->control_diagnostic)
++		return -EINVAL;
 +	if (priv->control_diagnostic && data->version != econet_en7528)
 +		return -EINVAL;
  	INIT_DELAYED_WORK(&priv->phy_link_work,
  			  airoha_xpon_phy_link_work_fn);
  
-@@ -4377,6 +4465,15 @@
+@@ -4377,6 +4548,15 @@
  		ret = dev_err_probe(dev, PTR_ERR(priv->phy),
  				    "failed to get digital xPON PHY\n");
  		goto err_put_gdm;
@@ -515,10 +598,15 @@ Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
  	}
  
  	eth_node = of_parse_phandle(dev->of_node, "ethernet", 0);
-@@ -4531,6 +4628,19 @@
+@@ -4531,6 +4711,24 @@
  	}
  
  	platform_set_drvdata(pdev, priv);
++	if (priv->rx_diagnostic) {
++		priv->rx_diagnostic_result = gpon_rx_diagnostic_start(priv);
++		dev_info(dev, "passive GPON RX diagnostic: result=%d started=%u; TX/activation/IRQs blocked\n",
++			 priv->rx_diagnostic_result, priv->rx_diagnostic_started);
++	}
 +	if (priv->control_diagnostic) {
 +		ret = airoha_xpon_phy_tx_inhibited(priv->phy);
 +		if (ret != 1) {
@@ -535,13 +623,35 @@ Subject: [PATCH] add single-owner TX-inhibited PHY and MAC diagnostics
  	if (airoha_xpon_is_gpon(priv)) {
  		ret = devm_device_add_group(dev, &gpon_bip_group);
  		if (ret)
+@@ -4549,6 +4747,8 @@
+ 	return 0;
+ 
+ err_unregister_xpon:
++	if (priv->rx_diagnostic)
++		gpon_rx_diagnostic_stop(priv);
+ 	airoha_eth_unregister_xpon(priv->gdm_dev, link_ops, priv);
+ err_del_upstream:
+ 	if (priv->sfp_bus)
+@@ -4581,6 +4781,9 @@
+ 	priv = platform_get_drvdata(pdev);
+ 	if (!priv)
+ 		return;
++
++	if (priv->rx_diagnostic)
++		gpon_rx_diagnostic_stop(priv);
+ 
+ 	dev_info(priv->dev, "removing xPON mode %s\n",
+ 		 airoha_xpon_mode_name(priv->mode));
 --- a/drivers/net/ethernet/airoha/airoha_xpon.h
 +++ b/drivers/net/ethernet/airoha/airoha_xpon.h
-@@ -383,6 +383,7 @@
+@@ -383,6 +383,10 @@
  	bool			phy_initialized;
  	bool			phy_powered;
  	struct net_device	*gdm_dev;
 +	bool			control_diagnostic;
++	bool			rx_diagnostic;
++	bool			rx_diagnostic_started;
++	int			rx_diagnostic_result;
  	bool			started;
  	bool			optical_active;
  	bool			mac_enabled;
