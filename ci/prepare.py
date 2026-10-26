@@ -55,6 +55,7 @@ run('./scripts/feeds', 'install', '-a', cwd=source)
 run('python3', str(repository / 'ci/prepare-board.py'), str(source))
 kernel_patches = source / 'target/linux/airoha/patches-6.18'
 shutil.copyfile(repository / 'patches/999-jcow414-require-en7571-calibration.patch', kernel_patches / '999-jcow414-require-en7571-calibration.patch')
+shutil.copyfile(repository / 'patches/1001-led-netdev-guard-unnamed-hw-device.patch', kernel_patches / '1001-led-netdev-guard-unnamed-hw-device.patch')
 if args.variant == 'probe-only':
     shutil.copyfile(repository / 'patches/1000-en7571-diagnostic-only.patch', kernel_patches / '1000-en7571-diagnostic-only.patch')
     patch = repository / 'patches/jcow414-probe-only-board.patch'
@@ -62,11 +63,14 @@ if args.variant == 'probe-only':
     run('git', 'apply', str(patch), cwd=source)
 
 if args.variant == 'baseline':
-    # Exact sanitized diffconfig captured from the active LXC build.
+    # Preserve the captured configuration, but distinguish the boot fix from
+    # the pon-dev1 image that panicked before device-tree discovery.
     seed = (repository / 'config.lxc.seed').read_text()
+    assert 'CONFIG_VERSION_NUMBER="pon-dev1"' in seed
+    seed = seed.replace('CONFIG_VERSION_NUMBER="pon-dev1"', 'CONFIG_VERSION_NUMBER="pon-dev2"', 1)
 else:
     seed = (repository / 'config.seed').read_text()
-    seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-1"\n'
+    seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-2"\n'
     seed += f'CONFIG_CCACHE_DIR="{repository / ".cache/ccache"}"\n'
 (source / '.config').write_text(seed)
 run('make', '-j1', 'defconfig', cwd=source)
@@ -90,6 +94,7 @@ manifest = {
     'firmware_seed_sha256': hashlib.sha256(seed.encode()).hexdigest(),
     'optical_mac_phy_enabled': False,
     'hardware_validated': False,
+    'raw_appended_dtb_required': True,
     'patches_sha256': {
         item.name: hashlib.sha256(item.read_bytes()).hexdigest()
         for item in sorted((repository / 'patches').glob('*.patch'))

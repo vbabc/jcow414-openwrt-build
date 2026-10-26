@@ -8,7 +8,7 @@ The source is [Sirherobrine23/openwrt](https://github.com/Sirherobrine23/openwrt
 
 Open **Actions → Build JCOW414 diagnostics → Run workflow**. Choose:
 
-- **baseline** (default): build the same pinned source, feeds, patches and firmware configuration as the LXC baseline. `config.lxc.seed` is the sanitized diffconfig captured from that build, including version `pon-dev1`. I2C, optical PHY/MAC and GDM2 remain disabled.
+- **baseline** (default): use the pinned source, feeds and sanitized LXC configuration, with the appended-DTB boot fix and version `pon-dev2`. The captured `config.lxc.seed` remains historical; the build script overrides its original version label. I2C, optical PHY/MAC and GDM2 remain disabled.
 - **probe-only**: enable the I2C controller and EN7571 identity/calibration probe. A paired driver patch returns before optical initialization, frontend registration or starting the control worker. Optical PHY/MAC and GDM2 remain disabled.
 
 The workflow uses an Ubuntu 24.04 standard hosted runner, up to four build jobs, pinned Actions, download caching, a bounded compiler cache for probe-only builds, and three-day artifact retention. It uploads firmware, source/configuration records and logs. It performs no deployment. Matching firmware inputs do not promise byte-identical output across different host environments. A compilation success does not establish bootability, optical correctness or ISP interoperability.
@@ -17,6 +17,8 @@ Only public source pins, build scripts, patches and synthetic tests belong in th
 
 ## Changes
 
+- Select `CONFIG_MIPS_RAW_APPENDED_DTB` for the raw zImage/append-dtb boot path. The original `pon-dev1` selected ELF-appended DTB mode and failed its first hardware boot with `Kernel panic - not syncing: no dtb found`. CI now checks both the target template and the resolved kernel configuration and exports the latter, System.map and the kernel ELF header. This correction still requires a successful hardware boot before deployment claims.
+- Guard LED netdev hardware-control activation when the returned device has no name. Recovery UART captured a separate startup panic at `strlen(NULL)` in `netdev_trig_activate` while LAN LEDs and the switch were registering. This patch skips hardware-control setup for an unnamed device; live recovery uses disabled LAN activity triggers until corrected firmware is tested.
 - Add the JCOW414 calibration cell at reservearea-relative offset `0x140477`, length `0xe1` (225 bytes).
 - Remove an unresolved generic calibration-package reference from the inherited Jio device recipe.
 - Require a loaded, sufficiently sized EN7571 calibration record with the correct family/profile marker and nonblank target/timing fields before frontend initialization.

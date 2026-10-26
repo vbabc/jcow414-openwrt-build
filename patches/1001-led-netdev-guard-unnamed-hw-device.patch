@@ -1,0 +1,19 @@
+From: JCOW414 diagnostic build
+Subject: [PATCH] leds: netdev: skip unnamed hardware-control devices
+
+A PHY-backed LED can become visible before the associated network device
+has a name. Avoid passing that NULL name to strlen during trigger activation;
+leave hardware control disabled and complete software-trigger setup instead.
+
+--- a/drivers/leds/trigger/ledtrig-netdev.c
++++ b/drivers/leds/trigger/ledtrig-netdev.c
+@@ -715,7 +715,8 @@ static int netdev_trig_activate(struct led_classdev *led_cdev)
+ 	 */
+ 	if (supports_hw_control(led_cdev)) {
+ 		dev = led_cdev->hw_control_get_device(led_cdev);
+-		if (dev) {
++		/* The PHY may precede netdev registration during startup. */
++		if (dev && dev_name(dev)) {
+ 			const char *name = dev_name(dev);
+ 
+ 			trigger_data->hw_control = true;

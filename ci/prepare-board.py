@@ -58,6 +58,18 @@ def amend_image(before):
     return before.replace(needle, 'kmod-mt7663-firmware-ap', 1)
 
 record('target/linux/airoha/image/en7528.mk', amend_image)
+
+
+def amend_kernel_config(before):
+    # This image recipe appends the board DTB to a raw zImage. The MIPS
+    # decompressor only carries that DTB into the kernel in RAW mode.
+    needle = 'CONFIG_MIPS_ELF_APPENDED_DTB=y\n'
+    assert before.count(needle) == 1, 'Unexpected EN7528 appended-DTB configuration'
+    assert 'CONFIG_MIPS_RAW_APPENDED_DTB=y' not in before
+    return before.replace(needle, '# CONFIG_MIPS_ELF_APPENDED_DTB is not set\nCONFIG_MIPS_RAW_APPENDED_DTB=y\n', 1)
+
+
+record('target/linux/airoha/en7528/config-6.18', amend_kernel_config)
 output = source.parent / 'jcow414-diagnostic-board.patch'
 output.write_text(''.join(patches))
 print(json.dumps({'patch': str(output), 'optical_activation_enabled': False, 'factory_data_written': False}))

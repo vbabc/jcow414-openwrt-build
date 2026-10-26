@@ -4,9 +4,21 @@ import hashlib
 import os
 import pathlib
 import shutil
+import subprocess
 
 repository = pathlib.Path(__file__).resolve().parent.parent
-target = pathlib.Path(os.environ['BUILD_ROOT']) / 'openwrt/bin/targets/airoha/en7528'
+source = pathlib.Path(os.environ['BUILD_ROOT']) / 'openwrt'
+target = source / 'bin/targets/airoha/en7528'
+kernels = list((source / 'build_dir').glob('target-*/linux-airoha_en7528/linux-6.18.55'))
+assert len(kernels) == 1, 'Cannot identify the built kernel'
+kernel = kernels[0]
+resolved_config = (kernel / '.config').read_text()
+assert 'CONFIG_MIPS_RAW_APPENDED_DTB=y\n' in resolved_config, 'Built kernel cannot carry the raw-appended DTB'
+assert 'CONFIG_MIPS_ELF_APPENDED_DTB=y\n' not in resolved_config, 'Built kernel still uses the incompatible DTB mode'
+shutil.copyfile(kernel / '.config', repository / 'artifacts/kernel.config')
+shutil.copyfile(kernel / 'System.map', repository / 'artifacts/kernel.System.map')
+with (repository / 'artifacts/kernel-elf-header.txt').open('w') as output:
+    subprocess.run(['readelf', '-h', str(kernel / 'vmlinux')], stdout=output, check=True)
 output = repository / 'artifacts/firmware'
 output.mkdir(parents=True, exist_ok=True)
 assert target.is_dir(), 'No target output directory'

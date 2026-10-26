@@ -10,6 +10,14 @@ artifacts = repository / 'artifacts'
 kernels = list((source / 'build_dir').glob('target-*/linux-airoha_en7528/linux-6.18.55'))
 assert len(kernels) == 1
 kernel = kernels[0]
+
+target_config = (source / 'target/linux/airoha/en7528/config-6.18').read_text()
+assert 'CONFIG_MIPS_RAW_APPENDED_DTB=y\n' in target_config
+assert 'CONFIG_MIPS_ELF_APPENDED_DTB=y\n' not in target_config
+
+led_driver = (kernel / 'drivers/leds/trigger/ledtrig-netdev.c').read_text()
+led_activate = led_driver[led_driver.index('static int netdev_trig_activate('):led_driver.index('static void netdev_trig_deactivate(')]
+assert 'if (dev && dev_name(dev))' in led_activate, 'Missing protection for unnamed LED hardware-control device'
 driver = (kernel / 'drivers/net/optical/airoha/en7571_main.c').read_text()
 guard = (repository / 'tests/en7571-calibration-guard.c.inc').read_text().strip()
 assert guard in driver, 'Prepared driver does not contain the tested guard body'
