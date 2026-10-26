@@ -71,7 +71,10 @@ if args.variant == 'baseline':
 else:
     seed = (repository / 'config.seed').read_text()
     seed += f'CONFIG_VERSION_NUMBER="pon-{args.variant}-2"\n'
-seed = '\n'.join(line for line in seed.splitlines() if not line.startswith('CONFIG_CCACHE') and line != '# CONFIG_CCACHE is not set') + '\n'
+seed = '\n'.join(line for line in seed.splitlines() if not line.startswith(('CONFIG_CCACHE', 'CONFIG_DEVEL=')) and line not in ('# CONFIG_CCACHE is not set', '# CONFIG_DEVEL is not set')) + '\n'
+# CCACHE has a prompt conditional on DEVEL in the pinned Config-devel.in;
+# without DEVEL the user value is hidden and defconfig clears it.
+seed += 'CONFIG_DEVEL=y\n'
 seed += 'CONFIG_CCACHE=y\n'
 seed += f'CONFIG_CCACHE_DIR="{repository / ".cache/ccache"}"\n'
 (source / '.config').write_text(seed)
@@ -79,7 +82,7 @@ run('make', '-j1', 'defconfig', cwd=source)
 config = (source / '.config').read_text()
 for selected in ['TARGET_airoha_en7528_DEVICE_jiofiber_jcow414', 'PACKAGE_luci-app-omci', 'PACKAGE_omci-agent']:
     assert f'CONFIG_{selected}=y\n' in config, f'Missing configuration: {selected}'
-assert 'CONFIG_CCACHE=y\n' in config
+assert 'CONFIG_DEVEL=y\n' in config and 'CONFIG_CCACHE=y\n' in config
 run('git', 'diff', '--check', cwd=source)
 with (artifacts / 'config.seed.lock').open('w') as output:
     subprocess.run(['./scripts/diffconfig.sh'], cwd=source, stdout=output, check=True)
