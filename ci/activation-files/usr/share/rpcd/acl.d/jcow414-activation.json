@@ -8,7 +8,7 @@
         ]
       },
       "file": {
-        "/sys/bus/platform/devices/1fb60000.xmac/activation": [
+        "/sys/devices/platform/soc/1fb60000.xmac/activation": [
           "read"
         ]
       }
@@ -20,7 +20,7 @@
         ]
       },
       "file": {
-        "/sys/bus/platform/devices/1fb60000.xmac/activation": [
+        "/sys/devices/platform/soc/1fb60000.xmac/activation": [
           "write"
         ]
       }

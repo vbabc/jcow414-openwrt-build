@@ -47,3 +47,7 @@ print('Default-off manual identity/transport/TX gate, expiry/removal/shutdown an
 assert '(!priv->tx_inhibited_diagnostic && !priv->manual_activation)' in body(p,'diagnostic_state_show')
 assert 'ret = airoha_xpon_manual_stop(priv);' in body(c,'activation_store')
 assert body(p,'airoha_xpon_phy_power_on').count('(priv->tx_inhibited_diagnostic || priv->manual_activation)')==2
+
+# Validate the actual diagnostic reader without a hardware control/write API.
+import subprocess
+subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests/test-registration-state.py"), str(k)], check=True)

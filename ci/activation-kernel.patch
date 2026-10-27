@@ -314,7 +314,34 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->started))
-@@ -3311,7 +3323,7 @@
+@@ -3099,6 +3111,14 @@
+ 			break;
+ 
+ 		gpon_process_ploam_queue(priv);
++		if (active & INT_SN_REQ_RECV)
++			WRITE_ONCE(priv->diag_sn_requests, READ_ONCE(priv->diag_sn_requests) + 1);
++		if (active & INT_SN_ONU_SEND_O3)
++			WRITE_ONCE(priv->diag_sn_sent, READ_ONCE(priv->diag_sn_sent) + 1);
++		if (active & INT_RANGING_REQ_RECV)
++			WRITE_ONCE(priv->diag_ranging, READ_ONCE(priv->diag_ranging) + 1);
++		if (active & INT_PLOAMD_RECV)
++			WRITE_ONCE(priv->diag_ploam, READ_ONCE(priv->diag_ploam) + 1);
+ 
+ 		/*
+ 		 * Keep the serial-number diagnostics compact: one line only when
+@@ -3110,6 +3130,11 @@
+ 			sn_cfg = gpon_read(priv, GPON_SN_MSG_CFG);
+ 			phy_ret = airoha_xpon_phy_get_gpon_tx_counters(
+ 				priv->phy, &phy_tx_frames, &phy_tx_bursts);
++			WRITE_ONCE(priv->diag_phy_frames, phy_tx_frames);
++			WRITE_ONCE(priv->diag_phy_bursts, phy_tx_bursts);
++			WRITE_ONCE(priv->diag_phy_ret, phy_ret);
++			WRITE_ONCE(priv->diag_phy_samples, READ_ONCE(priv->diag_phy_samples) + 1);
++
+ 			dev_dbg(priv->dev,
+ 				"GPON SN event: irq=%#08x cfg=%#010x threshold=%lu tx_power=%lu random_delay=%lu rsp=%#06x act=%u serial=%#010x/%#010x guard=%#010x type12=%#010x type3=%#010x pre_delay=%#010x dbg_dly=%#010x tx_sync=%#010x phy_tx=%#010x/%#010x phy_ret=%d\n",
+ 				 active, sn_cfg,
+@@ -3311,7 +3336,7 @@
  {
  	struct xpon_priv *priv = data;
  
@@ -323,7 +350,7 @@
  		return -EPERM;
  
  	/* net/omci owns GPON activation; ndo_open only exposes saved carrier. */
-@@ -3842,7 +3854,10 @@
+@@ -3842,7 +3867,10 @@
  	int idx, ret;
  	u32 int_en;
  
@@ -335,7 +362,7 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->mac_enabled))
-@@ -4083,7 +4098,10 @@
+@@ -4083,7 +4111,10 @@
  	struct xpon_priv *priv = data;
  	int ret = 0;
  
@@ -347,7 +374,7 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->started))
-@@ -4355,8 +4373,8 @@
+@@ -4355,8 +4386,8 @@
  	 * PLOAM state callback so userspace never observes an invalid O0.
  	 */
  	airoha_gpon_omci_set_state(&priv->omci, GPON_O1_INITIAL);
@@ -358,7 +385,7 @@
  		return 0;
  	}
  
-@@ -4489,6 +4507,127 @@
+@@ -4489,6 +4520,163 @@
  	.attrs = control_diagnostic_attrs,
  };
  
@@ -475,8 +502,44 @@
 +	return ret ? ret : (ssize_t)count;
 +}
 +static DEVICE_ATTR(activation, 0600, activation_show, activation_store);
++
++/* Root-only, no identity bytes and no register writes or PHY control calls.
++ * Values are independent snapshots; batches can coalesce multiple interrupts.
++ * PHY counters are cached from the existing serial-event worker read, so a
++ * sysfs read never enables counters, clears interrupts or drains a FIFO.
++ */
++static ssize_t registration_state_show(struct device *dev,
++                                      struct device_attribute *attr, char *buf)
++{
++	struct xpon_priv *priv = dev_get_drvdata(dev);
++	bool serial_match;
++
++	if (!priv || !priv->manual_activation)
++		return -EOPNOTSUPP;
++	serial_match = gpon_read(priv, GPON_VENDOR_ID) == get_unaligned_be32(priv->hw_sn) &&
++		gpon_read(priv, GPON_VS_SN) == get_unaligned_be32(priv->hw_sn + 4);
++	return sysfs_emit(buf,
++		"serial_match=%u sn_request_batches=%u sn_sent_batches=%u ranging_batches=%u ploam_batches=%u ploam_messages=%u ploam_drops=%u assign_matches=%u phy_frames=%u phy_bursts=%u phy_counter_result=%d phy_counter_samples=%u sn_cfg=%#x mbi=%#x response_time=%#x guard=%#x type12=%#x type3=%#x pre_delay=%#x dbg_delay=%#x tx_sync=%#x mac_tx_bursts=%u\n",
++		serial_match, READ_ONCE(priv->diag_sn_requests),
++		READ_ONCE(priv->diag_sn_sent), READ_ONCE(priv->diag_ranging),
++		READ_ONCE(priv->diag_ploam), READ_ONCE(priv->ploam_rx_messages),
++		READ_ONCE(priv->ploam_rx_drops), READ_ONCE(priv->assign_onu_fastpath),
++		READ_ONCE(priv->diag_phy_frames), READ_ONCE(priv->diag_phy_bursts),
++		READ_ONCE(priv->diag_phy_ret), READ_ONCE(priv->diag_phy_samples),
++		gpon_read(priv, GPON_SN_MSG_CFG),
++		gpon_read(priv, GPON_MBI_MPI_STOP), gpon_read(priv, GPON_RSP_TIME),
++		gpon_read(priv, GPON_PLOu_GUARD_BIT),
++		gpon_read(priv, GPON_PLOu_PRMBL_TYPE1_2),
++		gpon_read(priv, GPON_PLOu_PRMBL_TYPE3),
++		gpon_read(priv, GPON_PRE_ASSIGNED_DLY), gpon_read(priv, GPON_DBG_DLY),
++		gpon_read(priv, GPON_DBG_TX_SYNC_OFFSET),
++		gpon_read(priv, GPON_DBG_TX_BST_CNT));
++}
++static DEVICE_ATTR(registration_state, 0400, registration_state_show, NULL);
++
 +static struct attribute *activation_attrs[] = {
 +	&dev_attr_activation.attr,
++	&dev_attr_registration_state.attr,
 +	NULL,
 +};
 +static const struct attribute_group activation_group = {
@@ -486,7 +549,7 @@
  static int airoha_xpon_probe(struct platform_device *pdev)
  {
  	struct device *dev = &pdev->dev;
-@@ -4515,9 +4654,16 @@
+@@ -4515,9 +4703,16 @@
  		device_property_read_bool(dev, "airoha,control-diagnostic");
  	priv->rx_diagnostic =
  		device_property_read_bool(dev, "airoha,rx-diagnostic");
@@ -504,7 +567,7 @@
  		return -EINVAL;
  	INIT_DELAYED_WORK(&priv->phy_link_work,
  			  airoha_xpon_phy_link_work_fn);
-@@ -4550,7 +4696,7 @@
+@@ -4550,7 +4745,7 @@
  		goto err_put_gdm;
  	}
  
@@ -513,7 +576,7 @@
  		ret = airoha_xpon_phy_tx_inhibited(priv->phy);
  		if (ret != 1) {
  			ret = dev_err_probe(dev, ret < 0 ? ret : -EIO,
-@@ -4660,6 +4806,8 @@
+@@ -4660,6 +4855,8 @@
  		optical_frontend_get_device(priv->frontend) : NULL;
  	xpon_desc.modes = XPON_MODE_CAP(XPON_MODE_GPON) |
  			  XPON_MODE_CAP(XPON_MODE_EPON);
@@ -522,7 +585,7 @@
  	xpon_desc.mode = airoha_xpon_core_mode(priv->mode);
  	xpon_desc.priv = priv;
  	priv->xpon = xpon_device_register(dev, &xpon_desc);
-@@ -4711,6 +4859,13 @@
+@@ -4711,6 +4908,13 @@
  	}
  
  	platform_set_drvdata(pdev, priv);
@@ -536,7 +599,7 @@
  	if (priv->rx_diagnostic) {
  		priv->rx_diagnostic_result = gpon_rx_diagnostic_start(priv);
  		dev_info(dev, "passive GPON RX diagnostic: result=%d started=%u; TX/activation/IRQs blocked\n",
-@@ -4782,6 +4937,13 @@
+@@ -4782,6 +4986,13 @@
  	if (!priv)
  		return;
  
@@ -550,7 +613,7 @@
  	if (priv->rx_diagnostic)
  		gpon_rx_diagnostic_stop(priv);
  
-@@ -4888,9 +5050,22 @@
+@@ -4888,9 +5099,22 @@
  };
  MODULE_DEVICE_TABLE(of, airoha_xpon_of_match);
  
@@ -587,3 +650,15 @@
  	bool			rx_diagnostic;
  	bool			rx_diagnostic_started;
  	int			rx_diagnostic_result;
+@@ -441,6 +446,11 @@
+ 	u32			ploam_rx_drops;
+ 	u32			ploam_rx_messages;
+ 	u32			assign_onu_fastpath;
++	/* Diagnostic IRQ-work batches, not exact wire-message counts. */
++	u32 diag_sn_requests, diag_sn_sent, diag_ranging, diag_ploam;
++	u32 diag_phy_frames, diag_phy_bursts, diag_phy_samples;
++	int diag_phy_ret;
++
+ 
+ 	/* BER measurement timer */
+ 	struct timer_list	ber_timer;

@@ -4,7 +4,7 @@
     "order": 15,
     "action": {
       "type": "view",
-      "path": "omci/activation"
+      "path": "omci/activation-test"
     },
     "depends": {
       "acl": [

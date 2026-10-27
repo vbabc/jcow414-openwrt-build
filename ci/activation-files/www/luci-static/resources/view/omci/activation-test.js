@@ -4,7 +4,7 @@
 "require ui";
 "require poll";
 
-var control = '/sys/bus/platform/devices/1fb60000.xmac/activation';
+var control = '/sys/devices/platform/soc/1fb60000.xmac/activation';
 
 return view.extend({
     load: function() { return fs.read(control); },
