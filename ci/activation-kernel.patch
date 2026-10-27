@@ -237,7 +237,44 @@
  		return -EPERM;
  	return airoha_xpon_set_fe_datapath(priv->dev, priv->gdm_dev,
  					  AIROHA_XPON_MODE_GPON, enable);
-@@ -1185,7 +1192,7 @@
+@@ -675,9 +682,36 @@
+ 		 FIELD_PREP(DBG_DLY_FIX_PHY_RX_DLY_MASK, fixed));
+ }
+ 
++/* Invalidate on full hardware start/reset, LOS/O1 and emergency stop. */
++static void gpon_invalidate_t3_cache(struct xpon_priv *priv)
++{
++	WRITE_ONCE(priv->gpon_t3_valid, false);
++	priv->gpon_t3_o3 = 0;
++	priv->gpon_t3_o5 = 0;
++}
++
++/* Restore only negotiated values; never synthesize another board's lengths. */
++static int gpon_restore_t3_preamble(struct xpon_priv *priv)
++{
++	int ret;
++
++	if (!READ_ONCE(priv->gpon_t3_valid))
++		return 0;
++	if (airoha_xpon_activation_blocked(priv))
++		return -EPERM;
++	ret = airoha_xpon_phy_set_gpon_extended_preamble(priv->phy,
++				priv->gpon_t3_o3, priv->gpon_t3_o5);
++	if (!ret)
++		WRITE_ONCE(priv->gpon_t3_restores,
++			   READ_ONCE(priv->gpon_t3_restores) + 1);
++	return ret;
++}
++
+ static void gpon_reset_activation_context(struct xpon_priv *priv)
+ {
+ 	u32 sn_cfg;
++
++	gpon_invalidate_t3_cache(priv);
+ 
+ 	gpon_clear_bits(priv, GPON_GBL_CFG, GBL_CFG_US_FEC_EN);
+ 	gpon_write(priv, GPON_ONU_ID, PLOAM_ONU_UNASSIGNED);
+@@ -1185,7 +1219,7 @@
  	bool ready, los;
  	int ret, t;
  
@@ -246,7 +283,35 @@
  		return;
  
  	if (type != PLOAM_UP_DYING_GASP) {
-@@ -1897,7 +1904,12 @@
+@@ -1543,6 +1577,8 @@
+ 	u32 val;
+ 	int ret;
+ 
++	WRITE_ONCE(priv->gpon_t3_valid, false);
++
+ 	/*
+ 	 * G_PLOu_PRMBL_TYPE3:
+ 	 *   bit 24    ebl_en
+@@ -1559,10 +1595,15 @@
+ 
+ 	ret = airoha_xpon_phy_set_gpon_extended_preamble(priv->phy,
+ 							o3_t3, o5_t3);
+-	if (ret)
++	if (ret) {
+ 		dev_warn(priv->dev,
+-			 "failed to program GPON PHY extended preamble: %d\n",
+-			 ret);
++			 "failed to program GPON PHY extended preamble: %d\n", ret);
++		airoha_xpon_tx_enable(priv, false);
++		return;
++	}
++	priv->gpon_t3_o3 = o3_t3;
++	priv->gpon_t3_o5 = o5_t3;
++	WRITE_ONCE(priv->gpon_t3_valid, true);
+ }
+ 
+ static void gpon_cb_set_key_switch_time(void *hw_priv, u32 superframe)
+@@ -1897,7 +1938,12 @@
  {
  	struct xpon_priv *priv = hw_priv;
  
@@ -260,7 +325,7 @@
  		if (identity) {
  			priv->identity = *identity;
  			memcpy(priv->hw_sn, identity->serial_number, sizeof(priv->hw_sn));
-@@ -1974,7 +1986,7 @@
+@@ -1974,7 +2020,7 @@
  	unsigned int channel = 0;
  	int ret;
  
@@ -269,7 +334,7 @@
  		return -EPERM;
  
  	ret = gpon_set_omci_tcont_hw(priv, entity_id, alloc_id, valid,
-@@ -2001,7 +2013,7 @@
+@@ -2001,7 +2047,7 @@
  	struct xpon_priv *priv = hw_priv;
  	int ret;
  
@@ -278,7 +343,7 @@
  		return -EPERM;
  
  	/*
-@@ -2033,7 +2045,7 @@
+@@ -2033,7 +2079,7 @@
  	unsigned int tcont_index;
  	int ret;
  
@@ -287,7 +352,7 @@
  		return -EPERM;
  
  	if (!service || service->multicast || service->vlan_treatment_valid ||
-@@ -2113,7 +2125,7 @@
+@@ -2113,7 +2159,7 @@
  	struct xpon_priv *priv = hw_priv;
  	u16 gem_port_id;
  
@@ -296,7 +361,29 @@
  		return -EPERM;
  
  	if (!airoha_eth_xpon_del_service(priv->gdm_dev, cookie,
-@@ -2416,7 +2428,7 @@
+@@ -2209,6 +2255,21 @@
+ 	enum airoha_xpon_phy_gpon_oper_state phy_state;
+ 	bool update_phy_state = true;
+ 	int ret;
++
++	/* O2 retries stay on this OLT; O1/O7 cannot reuse an old preamble. */
++	if (state == GPON_O1_INITIAL || state == GPON_O7_EMERGENCY_STOP)
++		gpon_invalidate_t3_cache(priv);
++
++	/* O2 cleared PHY lengths/mode. Restore them before MAC O3 can burst. */
++	if (state == GPON_O3_SERIAL_NUMBER || state == GPON_O4_RANGING) {
++		ret = gpon_restore_t3_preamble(priv);
++		if (ret) {
++			dev_warn(priv->dev, "cached GPON T3 restore failed: %d\n", ret);
++			/* No MAC O3/O4 write on failure; keep the optical path off. */
++			airoha_xpon_tx_enable(priv, false);
++			return;
++		}
++	}
+ 
+ 	/*
+ 	 * Mirror the vendor PHY state sequencing before updating the MAC
+@@ -2416,7 +2477,7 @@
  	u32 fifo_depth, irq_mask, known, pending, unknown, wan_conf;
  	int ret;
  
@@ -305,7 +392,7 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->mac_enabled))
-@@ -3012,7 +3024,7 @@
+@@ -3012,7 +3073,7 @@
  	struct xpon_priv *priv = hw_priv;
  	int ret = 0;
  
@@ -314,7 +401,7 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->started))
-@@ -3099,6 +3111,14 @@
+@@ -3099,6 +3160,14 @@
  			break;
  
  		gpon_process_ploam_queue(priv);
@@ -329,7 +416,7 @@
  
  		/*
  		 * Keep the serial-number diagnostics compact: one line only when
-@@ -3110,6 +3130,11 @@
+@@ -3110,6 +3179,11 @@
  			sn_cfg = gpon_read(priv, GPON_SN_MSG_CFG);
  			phy_ret = airoha_xpon_phy_get_gpon_tx_counters(
  				priv->phy, &phy_tx_frames, &phy_tx_bursts);
@@ -341,7 +428,7 @@
  			dev_dbg(priv->dev,
  				"GPON SN event: irq=%#08x cfg=%#010x threshold=%lu tx_power=%lu random_delay=%lu rsp=%#06x act=%u serial=%#010x/%#010x guard=%#010x type12=%#010x type3=%#010x pre_delay=%#010x dbg_dly=%#010x tx_sync=%#010x phy_tx=%#010x/%#010x phy_ret=%d\n",
  				 active, sn_cfg,
-@@ -3311,7 +3336,7 @@
+@@ -3311,7 +3385,7 @@
  {
  	struct xpon_priv *priv = data;
  
@@ -350,7 +437,7 @@
  		return -EPERM;
  
  	/* net/omci owns GPON activation; ndo_open only exposes saved carrier. */
-@@ -3842,7 +3867,10 @@
+@@ -3842,7 +3916,10 @@
  	int idx, ret;
  	u32 int_en;
  
@@ -362,7 +449,7 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->mac_enabled))
-@@ -4083,7 +4111,10 @@
+@@ -4083,7 +4160,10 @@
  	struct xpon_priv *priv = data;
  	int ret = 0;
  
@@ -374,7 +461,7 @@
  		return -EPERM;
  
  	if (READ_ONCE(priv->started))
-@@ -4355,8 +4386,8 @@
+@@ -4355,8 +4435,8 @@
  	 * PLOAM state callback so userspace never observes an invalid O0.
  	 */
  	airoha_gpon_omci_set_state(&priv->omci, GPON_O1_INITIAL);
@@ -385,7 +472,7 @@
  		return 0;
  	}
  
-@@ -4489,6 +4520,163 @@
+@@ -4489,6 +4569,165 @@
  	.attrs = control_diagnostic_attrs,
  };
  
@@ -519,7 +606,7 @@
 +	serial_match = gpon_read(priv, GPON_VENDOR_ID) == get_unaligned_be32(priv->hw_sn) &&
 +		gpon_read(priv, GPON_VS_SN) == get_unaligned_be32(priv->hw_sn + 4);
 +	return sysfs_emit(buf,
-+		"serial_match=%u sn_request_batches=%u sn_sent_batches=%u ranging_batches=%u ploam_batches=%u ploam_messages=%u ploam_drops=%u assign_matches=%u phy_frames=%u phy_bursts=%u phy_counter_result=%d phy_counter_samples=%u sn_cfg=%#x mbi=%#x response_time=%#x guard=%#x type12=%#x type3=%#x pre_delay=%#x dbg_delay=%#x tx_sync=%#x mac_tx_bursts=%u\n",
++		"serial_match=%u sn_request_batches=%u sn_sent_batches=%u ranging_batches=%u ploam_batches=%u ploam_messages=%u ploam_drops=%u assign_matches=%u phy_frames=%u phy_bursts=%u phy_counter_result=%d phy_counter_samples=%u sn_cfg=%#x mbi=%#x response_time=%#x guard=%#x type12=%#x type3=%#x pre_delay=%#x dbg_delay=%#x tx_sync=%#x mac_tx_bursts=%u t3_cached=%u t3_o3=%u t3_o5=%u t3_restores=%u\n",
 +		serial_match, READ_ONCE(priv->diag_sn_requests),
 +		READ_ONCE(priv->diag_sn_sent), READ_ONCE(priv->diag_ranging),
 +		READ_ONCE(priv->diag_ploam), READ_ONCE(priv->ploam_rx_messages),
@@ -533,7 +620,9 @@
 +		gpon_read(priv, GPON_PLOu_PRMBL_TYPE3),
 +		gpon_read(priv, GPON_PRE_ASSIGNED_DLY), gpon_read(priv, GPON_DBG_DLY),
 +		gpon_read(priv, GPON_DBG_TX_SYNC_OFFSET),
-+		gpon_read(priv, GPON_DBG_TX_BST_CNT));
++		gpon_read(priv, GPON_DBG_TX_BST_CNT),
++		READ_ONCE(priv->gpon_t3_valid), READ_ONCE(priv->gpon_t3_o3),
++		READ_ONCE(priv->gpon_t3_o5), READ_ONCE(priv->gpon_t3_restores));
 +}
 +static DEVICE_ATTR(registration_state, 0400, registration_state_show, NULL);
 +
@@ -549,7 +638,7 @@
  static int airoha_xpon_probe(struct platform_device *pdev)
  {
  	struct device *dev = &pdev->dev;
-@@ -4515,9 +4703,16 @@
+@@ -4515,9 +4754,16 @@
  		device_property_read_bool(dev, "airoha,control-diagnostic");
  	priv->rx_diagnostic =
  		device_property_read_bool(dev, "airoha,rx-diagnostic");
@@ -567,7 +656,7 @@
  		return -EINVAL;
  	INIT_DELAYED_WORK(&priv->phy_link_work,
  			  airoha_xpon_phy_link_work_fn);
-@@ -4550,7 +4745,7 @@
+@@ -4550,7 +4796,7 @@
  		goto err_put_gdm;
  	}
  
@@ -576,7 +665,7 @@
  		ret = airoha_xpon_phy_tx_inhibited(priv->phy);
  		if (ret != 1) {
  			ret = dev_err_probe(dev, ret < 0 ? ret : -EIO,
-@@ -4660,6 +4855,8 @@
+@@ -4660,6 +4906,8 @@
  		optical_frontend_get_device(priv->frontend) : NULL;
  	xpon_desc.modes = XPON_MODE_CAP(XPON_MODE_GPON) |
  			  XPON_MODE_CAP(XPON_MODE_EPON);
@@ -585,7 +674,7 @@
  	xpon_desc.mode = airoha_xpon_core_mode(priv->mode);
  	xpon_desc.priv = priv;
  	priv->xpon = xpon_device_register(dev, &xpon_desc);
-@@ -4711,6 +4908,13 @@
+@@ -4711,6 +4959,13 @@
  	}
  
  	platform_set_drvdata(pdev, priv);
@@ -599,7 +688,7 @@
  	if (priv->rx_diagnostic) {
  		priv->rx_diagnostic_result = gpon_rx_diagnostic_start(priv);
  		dev_info(dev, "passive GPON RX diagnostic: result=%d started=%u; TX/activation/IRQs blocked\n",
-@@ -4782,6 +4986,13 @@
+@@ -4782,6 +5037,13 @@
  	if (!priv)
  		return;
  
@@ -613,7 +702,7 @@
  	if (priv->rx_diagnostic)
  		gpon_rx_diagnostic_stop(priv);
  
-@@ -4888,9 +5099,22 @@
+@@ -4888,9 +5150,22 @@
  };
  MODULE_DEVICE_TABLE(of, airoha_xpon_of_match);
  
@@ -650,7 +739,7 @@
  	bool			rx_diagnostic;
  	bool			rx_diagnostic_started;
  	int			rx_diagnostic_result;
-@@ -441,6 +446,11 @@
+@@ -441,6 +446,16 @@
  	u32			ploam_rx_drops;
  	u32			ploam_rx_messages;
  	u32			assign_onu_fastpath;
@@ -658,6 +747,11 @@
 +	u32 diag_sn_requests, diag_sn_sent, diag_ranging, diag_ploam;
 +	u32 diag_phy_frames, diag_phy_bursts, diag_phy_samples;
 +	int diag_phy_ret;
++	/* Negotiated by this optical session; retained only across TO1 retries. */
++	bool gpon_t3_valid;
++	u8 gpon_t3_o3, gpon_t3_o5;
++	u32 gpon_t3_restores;
++
 +
  
  	/* BER measurement timer */

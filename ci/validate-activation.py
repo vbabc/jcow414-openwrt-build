@@ -51,3 +51,5 @@ assert body(p,'airoha_xpon_phy_power_on').count('(priv->tx_inhibited_diagnostic 
 # Validate the actual diagnostic reader without a hardware control/write API.
 import subprocess
 subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests/test-registration-state.py"), str(k)], check=True)
+
+subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests/test-preamble-retry.py"), str(k)], check=True)

@@ -30,7 +30,7 @@ struct xpon_priv {
  bool manual_activation; unsigned char hw_sn[8];
  u32 diag_sn_requests,diag_sn_sent,diag_ranging,diag_ploam;
  u32 diag_phy_frames,diag_phy_bursts,diag_phy_samples,ploam_rx_messages,ploam_rx_drops,assign_onu_fastpath;
- int diag_phy_ret;
+ int diag_phy_ret; bool gpon_t3_valid; unsigned char gpon_t3_o3,gpon_t3_o5; u32 gpon_t3_restores;
 };
 static struct xpon_priv *instance;
 static u32 regs[0x400/4];

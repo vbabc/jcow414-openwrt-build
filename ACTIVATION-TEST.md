@@ -1,5 +1,15 @@
 # Expiring JCOW414 GPON activation RAM experiment
 
+## Negotiated-preamble retry candidate: pon-activation-test-3
+
+A second bounded optical test with the owner's serial and PLOAM value matched still cycled O2/O3, despite serial grants and hardware TX counters. No O4/O5 or OMCI exchange was observed. Protected hashes matched and the test expired with TX inhibited.
+
+Audit of the complete pinned PLOAM FSM found that O2 clears PHY extended-T3 lengths/mode. The next Upstream_Overhead enters O3 without restoring them, while Extended_Burst_Length is accepted only in O3. This candidate caches only successfully programmed negotiated lengths, restores them before the MAC O3/O4 activation write, retains the cache across same-session TO1 retries and invalidates it on O1/O7 or full hardware reset. Restore failure or blocked admission disables TX and skips the MAC activation write. No other board's lengths, laser power or calibration are copied.
+
+The PHY/frontend/API source and ten safety/lifecycle functions remain byte-identical to test2. The actual-C test exercises the unmodified PLOAM handlers, changed MAC callback prefix and actual PHY functions: repeated retries, new length values, stale-session invalidation and fail-closed errors. Three unsafe preamble mutations and the existing eight unsafe gate mutations are rejected. The callback tail after the MAC activation write is unchanged and excluded from that unit harness. Full compilation, compiled-code verification and RAM hardware validation remain necessary. No claim of a confirmed registration fix.
+
+The private-safe root-only reader adds cache-validity/negotiated-length/restore-count fields. Existing Start/Stop and 180-second expiry remain unchanged. No identity, password, BOB data or packet payloads are in these public inputs.
+
 ## Diagnostic follow-up: pon-activation-test-2
 
 The first owner-controlled 180-second active RAM trial reached O3 repeatedly, with stable downstream lock, but no O4/O5 or OMCI packets. It ended automatically with PHY/MAC off and TX inhibited; protected flash/calibration hashes matched. The cause is unresolved. Detailed serial-event logs were compiled out and runtime dynamic debug is unavailable.
