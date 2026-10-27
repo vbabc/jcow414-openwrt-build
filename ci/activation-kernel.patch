@@ -1,0 +1,589 @@
+--- a/drivers/phy/airoha/phy-airoha-xpon.c
++++ b/drivers/phy/airoha/phy-airoha-xpon.c
+@@ -13,6 +13,7 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/phy/phy.h>
+ #include <linux/phy/phy-airoha-xpon.h>
+@@ -178,6 +179,9 @@
+ 	enum airoha_xpon_phy_submode submode;
+ 	struct delayed_work ready_work;
+ 	bool tx_inhibited_diagnostic;
++	bool manual_activation;
++	bool activation_armed;
++	struct mutex tx_gate_lock;
+ 	bool initialized;
+ 	bool powered;
+ 	bool ready_reported;
+@@ -590,12 +594,13 @@
+ 	if (!priv->tx_disable_gpio)
+ 		return;
+ 
+-	/* Diagnostic mode must never release the physical transmit inhibit. */
+-	if (priv->tx_inhibited_diagnostic)
++	/* Serialize release against manual disarm; disarm wins before returning. */
++	mutex_lock(&priv->tx_gate_lock);
++	if (priv->tx_inhibited_diagnostic ||
++	    (priv->manual_activation && !READ_ONCE(priv->activation_armed)))
+ 		enable = false;
+-
+-	/* TX_DISABLE is described using its asserted (disable) polarity. */
+ 	gpiod_set_value_cansleep(priv->tx_disable_gpio, !enable);
++	mutex_unlock(&priv->tx_gate_lock);
+ }
+ 
+ int airoha_xpon_phy_set_tx_enable(struct phy *phy, bool enable)
+@@ -609,7 +614,8 @@
+ 	if (!priv)
+ 		return -ENODEV;
+ 
+-	if (priv->tx_inhibited_diagnostic && enable)
++	if (enable && (priv->tx_inhibited_diagnostic ||
++	    (priv->manual_activation && !READ_ONCE(priv->activation_armed))))
+ 		return -EPERM;
+ 	airoha_xpon_phy_set_tx_gpio(priv, enable);
+ 	return 0;
+@@ -624,11 +630,41 @@
+ 	if (!phy)
+ 		return -EINVAL;
+ 	priv = phy_get_drvdata(phy);
+-	if (!priv || !priv->tx_inhibited_diagnostic)
++	if (!priv || (!priv->tx_inhibited_diagnostic && !priv->manual_activation))
+ 		return -EOPNOTSUPP;
+ 	return gpiod_get_value_cansleep(priv->tx_disable_gpio);
+ }
+ EXPORT_SYMBOL_GPL(airoha_xpon_phy_tx_inhibited);
++
++
++/* Permission only: arming never deasserts TX_DISABLE. No persistent state. */
++int airoha_xpon_phy_set_activation_arm(struct phy *phy, bool arm)
++{
++	struct airoha_xpon_phy *priv;
++	int ret = 0;
++
++	if (!phy)
++		return -EINVAL;
++	priv = phy_get_drvdata(phy);
++	if (!priv || !priv->manual_activation || priv->tx_inhibited_diagnostic)
++		return -EOPNOTSUPP;
++	mutex_lock(&priv->tx_gate_lock);
++	if (arm) {
++		if (priv->submode != AIROHA_XPON_PHY_SUBMODE_GPON ||
++		    gpiod_get_value_cansleep(priv->tx_disable_gpio) != 1)
++			ret = -EIO;
++		else
++			WRITE_ONCE(priv->activation_armed, true);
++	} else {
++		WRITE_ONCE(priv->activation_armed, false);
++		gpiod_set_value_cansleep(priv->tx_disable_gpio, 1);
++		if (gpiod_get_value_cansleep(priv->tx_disable_gpio) != 1)
++			ret = -EIO;
++	}
++	mutex_unlock(&priv->tx_gate_lock);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(airoha_xpon_phy_set_activation_arm);
+ 
+ static void
+ airoha_xpon_phy_set_vcc_enabled(struct airoha_xpon_phy *priv, bool enable)
+@@ -707,6 +743,9 @@
+ 	if (submode != AIROHA_XPON_PHY_SUBMODE_GPON &&
+ 	    submode != AIROHA_XPON_PHY_SUBMODE_EPON)
+ 		return -EINVAL;
++
++	if (priv->manual_activation && submode != AIROHA_XPON_PHY_SUBMODE_GPON)
++		return -EPERM;
+ 
+ 	priv->submode = submode;
+ 	dev_info(priv->dev, "xPON PHY mode selected: %s\n",
+@@ -1143,7 +1182,7 @@
+ 	 */
+ 	airoha_xpon_phy_set_vcc_enabled(priv, true);
+ 	airoha_xpon_phy_set_tx_gpio(priv, false);
+-	if (priv->tx_inhibited_diagnostic &&
++	if ((priv->tx_inhibited_diagnostic || priv->manual_activation) &&
+ 	    gpiod_get_value_cansleep(priv->tx_disable_gpio) != 1)
+ 		return -EIO;
+ 
+@@ -1155,8 +1194,10 @@
+ 	if (ret)
+ 		goto err_power;
+ 
+-	airoha_xpon_phy_set_tx_gpio(priv, true);
+-	if (priv->tx_inhibited_diagnostic &&
++	/* Manual tests release TX only through the GPON overhead callback. */
++	if (!priv->manual_activation)
++		airoha_xpon_phy_set_tx_gpio(priv, true);
++	if ((priv->tx_inhibited_diagnostic || priv->manual_activation) &&
+ 	    gpiod_get_value_cansleep(priv->tx_disable_gpio) != 1) {
+ 		ret = -EIO;
+ 		goto err_power;
+@@ -1264,7 +1305,7 @@
+ 	struct airoha_xpon_phy *priv = dev_get_drvdata(dev);
+ 	int inhibited;
+ 
+-	if (!priv || !priv->tx_inhibited_diagnostic)
++	if (!priv || (!priv->tx_inhibited_diagnostic && !priv->manual_activation))
+ 		return -ENODEV;
+ 	inhibited = gpiod_get_value_cansleep(priv->tx_disable_gpio);
+ 	if (inhibited < 0)
+@@ -1308,6 +1349,11 @@
+ 	priv->soc = soc;
+ 	priv->tx_inhibited_diagnostic =
+ 		device_property_read_bool(dev, "airoha,tx-inhibited-diagnostic");
++	priv->manual_activation =
++		device_property_read_bool(dev, "airoha,manual-activation");
++	if (priv->manual_activation && priv->tx_inhibited_diagnostic)
++		return -EINVAL;
++	mutex_init(&priv->tx_gate_lock);
+ 	priv->submode = AIROHA_XPON_PHY_SUBMODE_GPON;
+ 	priv->trans_invert = airoha_xpon_phy_trans_invert(dev);
+ 	spin_lock_init(&priv->counter_lock);
+@@ -1367,7 +1413,7 @@
+ 		return dev_err_probe(dev, PTR_ERR(provider),
+ 				     "failed to register xPON PHY provider\n");
+ 
+-	if (priv->tx_inhibited_diagnostic) {
++	if (priv->tx_inhibited_diagnostic || priv->manual_activation) {
+ 		ret = devm_device_add_group(dev, &airoha_xpon_diag_group);
+ 		if (ret)
+ 			return ret;
+--- a/include/linux/phy/phy-airoha-xpon.h
++++ b/include/linux/phy/phy-airoha-xpon.h
+@@ -43,6 +43,7 @@
+ 	struct phy *phy, enum airoha_xpon_phy_gpon_oper_state state);
+ int airoha_xpon_phy_set_gpon_bit_delay(struct phy *phy, u8 delay);
+ int airoha_xpon_phy_set_tx_enable(struct phy *phy, bool enable);
++int airoha_xpon_phy_set_activation_arm(struct phy *phy, bool arm);
+ /* Diagnostic-only readback; returns 1 when the sole PHY owner holds inhibit. */
+ int airoha_xpon_phy_tx_inhibited(struct phy *phy);
+ int airoha_xpon_phy_set_tx_calibration_mode(struct phy *phy, bool enable);
+--- a/drivers/net/optical/airoha/en7571_main.c
++++ b/drivers/net/optical/airoha/en7571_main.c
+@@ -603,7 +603,7 @@
+ 	phy_diag = device_property_read_bool(dev, "airoha,phy-diagnostic");
+ 	frontend_diag = phy_diag ||
+ 		device_property_read_bool(dev, "airoha,frontend-diagnostic");
+-	if (phy_diag) {
++	if (phy_diag || device_property_read_bool(dev, "airoha,manual-activation")) {
+ 		/* PHY probe owns and asserts GPIO16; EN7571 never requests it. */
+ 		priv->diag_phy = devm_phy_get(dev, "xpon");
+ 		if (IS_ERR(priv->diag_phy))
+@@ -630,13 +630,14 @@
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "device init failed\n");
+ 
+-	if (frontend_diag) {
+-		ret = phy_diag ? airoha_xpon_phy_tx_inhibited(priv->diag_phy) :
++	if (frontend_diag || device_property_read_bool(dev, "airoha,manual-activation")) {
++		ret = priv->diag_phy ? airoha_xpon_phy_tx_inhibited(priv->diag_phy) :
+ 			gpiod_get_value_cansleep(tx_disable);
+ 		if (ret != 1)
+ 			return dev_err_probe(dev, ret < 0 ? ret : -EIO,
+ 					     "TX-disable GPIO lost after initialization\n");
+-		priv->lddla.ops = &en7571_frontend_diag_ops;
++		if (frontend_diag)
++			priv->lddla.ops = &en7571_frontend_diag_ops;
+ 	}
+ 	if (phy_diag) {
+ 		ret = phy_init(priv->diag_phy);
+--- a/drivers/net/ethernet/airoha/airoha_xpon.c
++++ b/drivers/net/ethernet/airoha/airoha_xpon.c
+@@ -44,6 +44,7 @@
+ #include <linux/unaligned.h>
+ #include <linux/workqueue.h>
+ #include <net/xpon/omci.h>
++#include <linux/capability.h>
+ 
+ #include "airoha_eth.h"
+ #include "airoha_xpon.h"
+@@ -59,11 +60,17 @@
+ 	from_timer(var, callback_timer, timer_fieldname)
+ #endif
+ 
++static bool airoha_xpon_activation_blocked(struct xpon_priv *priv)
++{
++	return priv->control_diagnostic ||
++		(priv->manual_activation && !READ_ONCE(priv->activation_armed));
++}
++
+ bool airoha_gpon_omci_hw_is_diagnostic(void *hw_priv)
+ {
+ 	struct xpon_priv *priv = hw_priv;
+ 
+-	return priv->control_diagnostic;
++	return airoha_xpon_activation_blocked(priv);
+ }
+ 
+ static const u8 airoha_default_vendor_id[4] = {'M', 'T', 'K', 'G'};
+@@ -120,7 +127,7 @@
+ {
+ 	int ret;
+ 
+-	if (priv->control_diagnostic && enable)
++	if (airoha_xpon_activation_blocked(priv) && enable)
+ 		return -EPERM;
+ 
+ 	/*
+@@ -559,7 +566,7 @@
+ static int gpon_set_fe_datapath(struct xpon_priv *priv, bool enable)
+ {
+ 
+-	if (priv->control_diagnostic && enable)
++	if (airoha_xpon_activation_blocked(priv) && enable)
+ 		return -EPERM;
+ 	return airoha_xpon_set_fe_datapath(priv->dev, priv->gdm_dev,
+ 					  AIROHA_XPON_MODE_GPON, enable);
+@@ -1185,7 +1192,7 @@
+ 	bool ready, los;
+ 	int ret, t;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return;
+ 
+ 	if (type != PLOAM_UP_DYING_GASP) {
+@@ -1897,7 +1904,12 @@
+ {
+ 	struct xpon_priv *priv = hw_priv;
+ 
+-	if (priv->control_diagnostic) {
++	if (priv->manual_activation && key == OMCI_CONFIG_SERIAL_NUMBER)
++		WRITE_ONCE(priv->activation_identity_configured,
++			identity && (identity->valid & OMCI_IDENTITY_F_SERIAL_NUMBER) &&
++			(identity->serial_source == OMCI_CONFIG_SOURCE_NETLINK ||
++			 identity->serial_source == OMCI_CONFIG_SOURCE_SYSFS));
++	if (airoha_xpon_activation_blocked(priv)) {
+ 		if (identity) {
+ 			priv->identity = *identity;
+ 			memcpy(priv->hw_sn, identity->serial_number, sizeof(priv->hw_sn));
+@@ -1974,7 +1986,7 @@
+ 	unsigned int channel = 0;
+ 	int ret;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	ret = gpon_set_omci_tcont_hw(priv, entity_id, alloc_id, valid,
+@@ -2001,7 +2013,7 @@
+ 	struct xpon_priv *priv = hw_priv;
+ 	int ret;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	/*
+@@ -2033,7 +2045,7 @@
+ 	unsigned int tcont_index;
+ 	int ret;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	if (!service || service->multicast || service->vlan_treatment_valid ||
+@@ -2113,7 +2125,7 @@
+ 	struct xpon_priv *priv = hw_priv;
+ 	u16 gem_port_id;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	if (!airoha_eth_xpon_del_service(priv->gdm_dev, cookie,
+@@ -2416,7 +2428,7 @@
+ 	u32 fifo_depth, irq_mask, known, pending, unknown, wan_conf;
+ 	int ret;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	if (READ_ONCE(priv->mac_enabled))
+@@ -3012,7 +3024,7 @@
+ 	struct xpon_priv *priv = hw_priv;
+ 	int ret = 0;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	if (READ_ONCE(priv->started))
+@@ -3311,7 +3323,7 @@
+ {
+ 	struct xpon_priv *priv = data;
+ 
+-	if (priv->control_diagnostic)
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	/* net/omci owns GPON activation; ndo_open only exposes saved carrier. */
+@@ -3842,7 +3854,10 @@
+ 	int idx, ret;
+ 	u32 int_en;
+ 
+-	if (priv->control_diagnostic)
++	if (priv->manual_activation)
++		return -EPERM;
++
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	if (READ_ONCE(priv->mac_enabled))
+@@ -4083,7 +4098,10 @@
+ 	struct xpon_priv *priv = data;
+ 	int ret = 0;
+ 
+-	if (priv->control_diagnostic)
++	if (priv->manual_activation)
++		return -EPERM;
++
++	if (airoha_xpon_activation_blocked(priv))
+ 		return -EPERM;
+ 
+ 	if (READ_ONCE(priv->started))
+@@ -4355,8 +4373,8 @@
+ 	 * PLOAM state callback so userspace never observes an invalid O0.
+ 	 */
+ 	airoha_gpon_omci_set_state(&priv->omci, GPON_O1_INITIAL);
+-	if (priv->control_diagnostic) {
+-		dev_info(priv->dev, "MAC/OMCI control diagnostic registered; activation blocked\n");
++	if (priv->control_diagnostic || priv->manual_activation) {
++		dev_info(priv->dev, "MAC/OMCI registered; automatic activation blocked\n");
+ 		return 0;
+ 	}
+ 
+@@ -4489,6 +4507,127 @@
+ 	.attrs = control_diagnostic_attrs,
+ };
+ 
++/* This RAM experiment expires even if the controlling browser disappears. */
++#define JCOW414_ACTIVATION_SECONDS 180
++
++static int airoha_xpon_manual_stop(struct xpon_priv *priv)
++{
++	int ret, fe_ret;
++
++	/* Close all software admission and physical TX before draining work. */
++	WRITE_ONCE(priv->activation_armed, false);
++	ret = airoha_xpon_phy_set_activation_arm(priv->phy, false);
++	if (ret)
++		dev_err(priv->dev, "failed to assert manual TX inhibit: %d\n", ret);
++	airoha_gpon_omci_stop(&priv->omci);
++	if (READ_ONCE(priv->mac_enabled) || priv->phy_powered)
++		gpon_disable(priv);
++	gpon_write(priv, GPON_INT_ENABLE, 0);
++	gpon_set_bits(priv, GPON_MBI_MPI_STOP,
++		      MBI_RX_STOP | MBI_TX_STOP | MPI_RX_STOP | MPI_TX_STOP);
++	fe_ret = gpon_set_fe_datapath(priv, false);
++	if (fe_ret)
++		dev_err(priv->dev, "failed to stop GPON FE datapath: %d\n", fe_ret);
++	return ret ? ret : fe_ret;
++}
++
++static void airoha_xpon_activation_expiry(struct work_struct *work)
++{
++	struct xpon_priv *priv = container_of(to_delayed_work(work),
++		struct xpon_priv, activation_expiry_work);
++
++	mutex_lock(&priv->activation_lock);
++	airoha_xpon_manual_stop(priv);
++	mutex_unlock(&priv->activation_lock);
++	dev_info(priv->dev, "manual GPON activation lease expired; TX disabled\n");
++}
++
++static int airoha_xpon_manual_start(struct xpon_priv *priv)
++{
++	int ret;
++
++	if (!priv->manual_activation || priv->control_diagnostic ||
++	    priv->mode != AIROHA_XPON_MODE_GPON)
++		return -EOPNOTSUPP;
++	if (READ_ONCE(priv->activation_armed))
++		return -EALREADY;
++	if (READ_ONCE(priv->started))
++		return -EBUSY;
++	/* Require an explicit runtime serial apply, not the generic default. */
++	if (!READ_ONCE(priv->activation_identity_configured))
++		return -EINVAL;
++	ret = airoha_xpon_phy_tx_inhibited(priv->phy);
++	if (ret != 1)
++		return ret < 0 ? ret : -EIO;
++	ret = airoha_xpon_phy_set_activation_arm(priv->phy, true);
++	if (ret)
++		return ret;
++	WRITE_ONCE(priv->activation_armed, true);
++	ret = airoha_gpon_omci_start(&priv->omci);
++	if (ret) {
++		airoha_xpon_manual_stop(priv);
++		return ret;
++	}
++	mod_delayed_work(system_wq, &priv->activation_expiry_work,
++			 JCOW414_ACTIVATION_SECONDS * HZ);
++	return 0;
++}
++
++static ssize_t activation_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct xpon_priv *priv = dev_get_drvdata(dev);
++
++	if (!priv || !priv->manual_activation)
++		return -EOPNOTSUPP;
++	return sysfs_emit(buf,
++		"armed=%u identity_configured=%u lease_seconds=%u started=%u mac_enabled=%u tx_disabled=%d activation=%#x int_enable=%#x fifo_used=%u rx_gtc=%u\n",
++		READ_ONCE(priv->activation_armed),
++		READ_ONCE(priv->activation_identity_configured),
++		JCOW414_ACTIVATION_SECONDS, READ_ONCE(priv->started),
++		READ_ONCE(priv->mac_enabled),
++		airoha_xpon_phy_tx_inhibited(priv->phy),
++		gpon_read(priv, GPON_ACTIVATION_ST),
++		gpon_read(priv, GPON_INT_ENABLE),
++		gpon_read(priv, GPON_PLOAMd_FIFO_STS) & PLOAMd_FIFO_USED_MASK,
++		gpon_read(priv, GPON_DBG_RX_GTC_CNT));
++}
++
++static ssize_t activation_store(struct device *dev,
++				struct device_attribute *attr,
++				const char *buf, size_t count)
++{
++	struct xpon_priv *priv = dev_get_drvdata(dev);
++	bool arm;
++	int ret;
++
++	if (!capable(CAP_NET_ADMIN))
++		return -EPERM;
++	if (!priv || !priv->manual_activation)
++		return -EOPNOTSUPP;
++	ret = kstrtobool(buf, &arm);
++	if (ret)
++		return ret;
++	/* Never wait for the expiry worker while holding its mutex. */
++	if (!arm)
++		cancel_delayed_work_sync(&priv->activation_expiry_work);
++	mutex_lock(&priv->activation_lock);
++	if (arm)
++		ret = airoha_xpon_manual_start(priv);
++	else
++		ret = airoha_xpon_manual_stop(priv);
++	mutex_unlock(&priv->activation_lock);
++	return ret ? ret : (ssize_t)count;
++}
++static DEVICE_ATTR(activation, 0600, activation_show, activation_store);
++static struct attribute *activation_attrs[] = {
++	&dev_attr_activation.attr,
++	NULL,
++};
++static const struct attribute_group activation_group = {
++	.attrs = activation_attrs,
++};
++
+ static int airoha_xpon_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -4515,9 +4654,16 @@
+ 		device_property_read_bool(dev, "airoha,control-diagnostic");
+ 	priv->rx_diagnostic =
+ 		device_property_read_bool(dev, "airoha,rx-diagnostic");
++	priv->manual_activation =
++		device_property_read_bool(dev, "airoha,manual-activation");
++	if (priv->manual_activation && (priv->control_diagnostic || priv->rx_diagnostic))
++		return -EINVAL;
++	mutex_init(&priv->activation_lock);
++	INIT_DELAYED_WORK(&priv->activation_expiry_work, airoha_xpon_activation_expiry);
+ 	if (priv->rx_diagnostic && !priv->control_diagnostic)
+ 		return -EINVAL;
+-	if (priv->control_diagnostic && data->version != econet_en7528)
++	if ((priv->control_diagnostic || priv->manual_activation) &&
++	    data->version != econet_en7528)
+ 		return -EINVAL;
+ 	INIT_DELAYED_WORK(&priv->phy_link_work,
+ 			  airoha_xpon_phy_link_work_fn);
+@@ -4550,7 +4696,7 @@
+ 		goto err_put_gdm;
+ 	}
+ 
+-	if (priv->control_diagnostic) {
++	if (priv->control_diagnostic || priv->manual_activation) {
+ 		ret = airoha_xpon_phy_tx_inhibited(priv->phy);
+ 		if (ret != 1) {
+ 			ret = dev_err_probe(dev, ret < 0 ? ret : -EIO,
+@@ -4660,6 +4806,8 @@
+ 		optical_frontend_get_device(priv->frontend) : NULL;
+ 	xpon_desc.modes = XPON_MODE_CAP(XPON_MODE_GPON) |
+ 			  XPON_MODE_CAP(XPON_MODE_EPON);
++	if (priv->manual_activation)
++		xpon_desc.modes = XPON_MODE_CAP(XPON_MODE_GPON);
+ 	xpon_desc.mode = airoha_xpon_core_mode(priv->mode);
+ 	xpon_desc.priv = priv;
+ 	priv->xpon = xpon_device_register(dev, &xpon_desc);
+@@ -4711,6 +4859,13 @@
+ 	}
+ 
+ 	platform_set_drvdata(pdev, priv);
++	if (priv->manual_activation) {
++		ret = devm_device_add_group(dev, &activation_group);
++		if (ret) {
++			airoha_xpon_unregister_gpon_omci(priv);
++			goto err_unregister_xpon;
++		}
++	}
+ 	if (priv->rx_diagnostic) {
+ 		priv->rx_diagnostic_result = gpon_rx_diagnostic_start(priv);
+ 		dev_info(dev, "passive GPON RX diagnostic: result=%d started=%u; TX/activation/IRQs blocked\n",
+@@ -4782,6 +4937,13 @@
+ 	if (!priv)
+ 		return;
+ 
++	if (priv->manual_activation) {
++		cancel_delayed_work_sync(&priv->activation_expiry_work);
++		mutex_lock(&priv->activation_lock);
++		airoha_xpon_manual_stop(priv);
++		mutex_unlock(&priv->activation_lock);
++	}
++
+ 	if (priv->rx_diagnostic)
+ 		gpon_rx_diagnostic_stop(priv);
+ 
+@@ -4888,9 +5050,22 @@
+ };
+ MODULE_DEVICE_TABLE(of, airoha_xpon_of_match);
+ 
++static void airoha_xpon_shutdown(struct platform_device *pdev)
++{
++	struct xpon_priv *priv = platform_get_drvdata(pdev);
++
++	if (priv && priv->manual_activation) {
++		cancel_delayed_work_sync(&priv->activation_expiry_work);
++		mutex_lock(&priv->activation_lock);
++		airoha_xpon_manual_stop(priv);
++		mutex_unlock(&priv->activation_lock);
++	}
++}
++
+ static struct platform_driver airoha_xpon_driver = {
+ 	.probe = airoha_xpon_probe,
+ 	.remove = airoha_xpon_remove,
++	.shutdown = airoha_xpon_shutdown,
+ 	.driver = {
+ 		.name = "airoha-xpon",
+ 		.of_match_table = airoha_xpon_of_match,
+--- a/drivers/net/ethernet/airoha/airoha_xpon.h
++++ b/drivers/net/ethernet/airoha/airoha_xpon.h
+@@ -384,6 +384,11 @@
+ 	bool			phy_powered;
+ 	struct net_device	*gdm_dev;
+ 	bool			control_diagnostic;
++	bool			manual_activation;
++	bool			activation_armed;
++	bool			activation_identity_configured;
++	struct mutex		activation_lock;
++	struct delayed_work	activation_expiry_work;
+ 	bool			rx_diagnostic;
+ 	bool			rx_diagnostic_started;
+ 	int			rx_diagnostic_result;

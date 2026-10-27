@@ -1,0 +1,15 @@
+
+/* RAM-only activation experiment: explicitly armed, expiring; never auto-start. */
+&xpon {
+    /delete-property/ airoha,control-diagnostic;
+    /delete-property/ airoha,rx-diagnostic;
+    airoha,manual-activation;
+};
+&xpon_phy {
+    /delete-property/ airoha,tx-inhibited-diagnostic;
+    airoha,manual-activation;
+};
+&jcow414_en7571 {
+    /delete-property/ airoha,phy-diagnostic;
+    airoha,manual-activation;
+};

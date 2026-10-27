@@ -1,0 +1,29 @@
+{
+  "jcow414-activation": {
+    "description": "Control the expiring JCOW414 RAM activation experiment",
+    "read": {
+      "ubus": {
+        "file": [
+          "read"
+        ]
+      },
+      "file": {
+        "/sys/bus/platform/devices/1fb60000.xmac/activation": [
+          "read"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "file": [
+          "write"
+        ]
+      },
+      "file": {
+        "/sys/bus/platform/devices/1fb60000.xmac/activation": [
+          "write"
+        ]
+      }
+    }
+  }
+}

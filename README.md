@@ -14,6 +14,8 @@ every change. Runtime kernel/target objects are always prepared fresh. Cache
 identity is strict; there are no broad fallbacks for compiled tools and the
 compressed tools archive remains bounded to 2 GiB. No deployment occurs.
 
+The new **activation-test** variant adds a default-off, explicit runtime-identity gate, LuCI Start/Stop controls and an automatic180s stop. It permits normal optical transmission only after manual Start. See [ACTIVATION-TEST.md](ACTIVATION-TEST.md); full build and hardware verification are pending.
+
 Open **Actions → Cached guarded JCOW414 development builds → Run workflow**. Choose:
 
 - **baseline**: use the pinned source, feeds and sanitized LXC configuration, with the appended-DTB boot fix, the RAM-tested UART/LAN board corrections and version `pon-dev3`. The captured `config.lxc.seed` remains historical; the build script overrides its original version label. I2C, optical PHY/MAC and GDM2 remain disabled.

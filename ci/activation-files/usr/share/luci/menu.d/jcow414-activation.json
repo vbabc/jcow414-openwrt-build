@@ -1,0 +1,15 @@
+{
+  "admin/network/omci/activation": {
+    "title": "Activation test",
+    "order": 15,
+    "action": {
+      "type": "view",
+      "path": "omci/activation"
+    },
+    "depends": {
+      "acl": [
+        "jcow414-activation"
+      ]
+    }
+  }
+}

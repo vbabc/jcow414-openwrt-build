@@ -24,7 +24,7 @@ assert guard in driver, 'Prepared driver does not contain the tested guard body'
 probe = driver[driver.index('static int en7571_probe('):driver.index('static void en7571_remove(')]
 assert probe.index('en7571_factory_calibration_ready') < probe.index('ret = en7571_init(')
 variant = os.environ['VARIANT']
-if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag', 'rx-diag'):
+if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag', 'rx-diag', 'activation-test'):
     assert probe.index('"airoha,diagnostic-only"') < probe.index('ret = en7571_init(')
     assert 'return 0;' in probe[probe.index('"airoha,diagnostic-only"'):probe.index('ret = en7571_init(')]
 if variant == 'frontend-diag':
@@ -52,11 +52,11 @@ assert get('/soc/serial@1fbf0000', 'clock-frequency', 'u') == '1843200'
 for address in ['9', '10', '11', '12']:
     assert get('/soc/switch@1fb58000/mdio/ethernet-phy@' + address, 'status') == 'okay'
 assert get('/soc/i2c0@1fbf8000', 'status') == ('disabled' if variant == 'baseline' else 'okay')
-assert get('/soc/phy@1faf0000', 'status') == ('okay' if variant in ('phy-diag', 'mac-diag', 'rx-diag') else 'disabled')
+assert get('/soc/phy@1faf0000', 'status') == ('okay' if variant in ('phy-diag', 'mac-diag', 'rx-diag', 'activation-test') else 'disabled')
 for node in ['/soc/xmac@1fb60000', '/soc/ethernet@1fb50000/ethernet@2']:
-    assert get(node, 'status') == ('okay' if variant in ('mac-diag', 'rx-diag') else 'disabled')
+    assert get(node, 'status') == ('okay' if variant in ('mac-diag', 'rx-diag', 'activation-test') else 'disabled')
 assert get('/soc/spi@1fa10000/flash@0/partitions/partition@ddc0000/nvmem-layout/calibration@140477', 'reg', 'x') == '140477 e1'
-if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag', 'rx-diag'):
+if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag', 'rx-diag', 'activation-test'):
     assert get('/soc/i2c0@1fbf8000/lddla@70', 'compatible') == 'airoha,en7571'
     assert get('/soc/i2c0@1fbf8000/lddla@70', 'nvmem-cell-names') == 'calibration'
     node = '/soc/i2c0@1fbf8000/lddla@70'
@@ -71,21 +71,22 @@ if variant in ('probe-only', 'frontend-diag', 'phy-diag', 'mac-diag', 'rx-diag')
     else:
         properties = subprocess.check_output(['fdtget', '-p', str(dtb), node], text=True).splitlines()
         assert not set(properties) & {'airoha,diagnostic-only', 'airoha,frontend-diagnostic', 'tx-disable-gpios'}
-        get(node, 'airoha,phy-diagnostic')
+        get(node, 'airoha,manual-activation' if variant == 'activation-test' else 'airoha,phy-diagnostic')
         assert get(node, 'phy-names') == 'xpon'
         phy = '/soc/phy@1faf0000'
         assert get(node, 'phys', 'u') == get(phy, 'phandle', 'u')
-        get(phy, 'airoha,tx-inhibited-diagnostic')
+        get(phy, 'airoha,manual-activation' if variant == 'activation-test' else 'airoha,tx-inhibited-diagnostic')
         assert get(phy, 'compatible') == 'airoha,en7528-xpon-phy'
         assert get(phy, 'reg', 'x') == '1faf0000 600'
         assert get(phy, 'tx-disable-gpios', 'u').split() == [get('/soc/system-controller@1fbf0200/pinctrl', 'phandle', 'u'), '16', '0']
 print('Applied calibration guard and diagnostic DTB verified:', variant)
 
-if variant in ('mac-diag', 'rx-diag'):
-    subprocess.run(['python3', str(repository / 'ci/validate-mac.py'), str(kernel)], check=True)
-    subprocess.run(['python3', str(repository / 'tests/test-mac-inhibit.py'), str(kernel)], check=True)
+if variant in ('mac-diag', 'rx-diag', 'activation-test'):
+    if variant != 'activation-test':
+        subprocess.run(['python3', str(repository / 'ci/validate-mac.py'), str(kernel)], check=True)
+        subprocess.run(['python3', str(repository / 'tests/test-mac-inhibit.py'), str(kernel)], check=True)
     mac = '/soc/xmac@1fb60000'
-    get(mac, 'airoha,control-diagnostic')
+    get(mac, 'airoha,manual-activation' if variant == 'activation-test' else 'airoha,control-diagnostic')
     assert get(mac, 'optical-frontends', 'u') == get(node, 'phandle', 'u')
     assert get(mac, 'optical-frontend-names') == 'pon'
     assert get(node, '#optical-frontend-cells', 'u') == '0'
@@ -101,3 +102,12 @@ if variant == 'rx-diag':
     get('/soc/xmac@1fb60000', 'airoha,rx-diagnostic')
     subprocess.run(['python3', str(repository / 'ci/validate-rx.py'), str(kernel)], check=True)
     subprocess.run(['python3', str(repository / 'tests/test-rx-inhibit.py'), str(kernel)], check=True)
+
+if variant == 'activation-test':
+    for node, absent in [('/soc/xmac@1fb60000', ['airoha,control-diagnostic', 'airoha,rx-diagnostic']),
+                         ('/soc/phy@1faf0000', ['airoha,tx-inhibited-diagnostic']),
+                         ('/soc/i2c0@1fbf8000/lddla@70', ['airoha,phy-diagnostic'])]:
+        props = subprocess.check_output(['fdtget', '-p', str(dtb), node], text=True).splitlines()
+        assert not set(props) & set(absent)
+    subprocess.run(['python3', str(repository / 'ci/validate-activation.py'), str(kernel)], check=True)
+    subprocess.run(['python3', str(repository / 'tests/test-activation-gate.py'), str(kernel)], check=True)

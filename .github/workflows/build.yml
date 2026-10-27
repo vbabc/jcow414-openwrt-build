@@ -6,7 +6,7 @@ on:
       variant:
         description: Diagnostic build only; no deployment
         required: true
-        default: rx-diag
+        default: activation-test
         type: choice
         options:
           - baseline
@@ -15,6 +15,7 @@ on:
           - phy-diag
           - mac-diag
           - rx-diag
+          - activation-test
 
 permissions:
   contents: read
