@@ -1,5 +1,14 @@
 # Expiring JCOW414 GPON activation RAM experiment
 
+## Measured MAC RX-delay candidate: pon-activation-test-4
+
+Test3 restored the negotiated preamble on15 hardware retries but still stalled at O3. This candidate changes only the EN7528 match-data flag that admits the existing `gpon_adjust_mac_rx_delay()` routine. JCOW414 stock R2.52 xpon.ko invokes its equivalent from the broadcast upstream-overhead handler in O2 before entering O3: select the RX-delay probe, halve its measured value, compensate response-time excess above0x577 and program the masked fixed-RX-delay field.
+
+The stock module is a Jio-network hardware reference, not an Airtel provisioning template. This candidate copies no subscriber identity, OLT profile, calibration, laser power, fixed measured delay or alternate board defaults. The OLT-announced guard remains unchanged; stock's default guard20 is a separate untested lead. Active response-time0x577 and fine-delay0x1c were already consistent with the exact stock module and stay unchanged.
+
+All function bodies, PHY/frontend/API, runtime identity, preamble cache, Start/Stop, default-off controls and180s non-renewing lease remain unchanged from test3. Only the EN7528 data flag changes in the activation-only overlay. Actual-function tests cover measured half-delay, response compensation, preservation of unrelated bits, disabled-family behavior and three rejected negative mutations. Existing preamble, reader, lifecycle and board checks remain required. Artifact/compiled review and a no-fibre RAM test precede any new optical attempt. This is not a confirmed Airtel fix.
+
+
 ## Negotiated-preamble retry candidate: pon-activation-test-3
 
 A second bounded optical test with the owner's serial and PLOAM value matched still cycled O2/O3, despite serial grants and hardware TX counters. No O4/O5 or OMCI exchange was observed. Protected hashes matched and the test expired with TX inhibited.
