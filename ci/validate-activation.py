@@ -55,3 +55,5 @@ subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests
 subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests/test-preamble-retry.py"), str(k)], check=True)
 
 subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests/test-rx-delay-activation.py"), str(k)], check=True)
+
+subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tests/test-gpon-guard-default.py"), str(k)], check=True)

@@ -702,8 +702,12 @@
  	if (priv->rx_diagnostic)
  		gpon_rx_diagnostic_stop(priv);
  
-@@ -4871,6 +5133,8 @@
+@@ -4869,8 +5131,12 @@
+ 	.gpon_fine_delay = 0x1c,
+ 	.gpon_rsp_time_activation = GPON_RSP_TIME_ACT_EN7528,
  	.gpon_idle_gem_threshold = GPON_IDLE_GEM_THLD_DEFAULT,
++	/* JCOW414 stock default: use 20 literally in PHY and MAC guard fields. */
++	.gpon_guard_bits_override = GPON_PHY_GUARD_BIT_NUM,
  	.gpon_sn_tx_power_mode = GPON_SN_TX_POWER_MODE_LEGACY,
  	.gpon_reset_dbg_dly = true,
 +	/* JCOW414 stock xpon.ko measures/compensates MAC RX delay before O3. */
@@ -711,7 +715,7 @@
  	.mac_irq_via_eth = true,
  	.gpon_reset_on_start = true,
  	.gpon_rearm_tx_on_overhead = true,
-@@ -4888,9 +5152,22 @@
+@@ -4888,9 +5154,22 @@
  };
  MODULE_DEVICE_TABLE(of, airoha_xpon_of_match);
  

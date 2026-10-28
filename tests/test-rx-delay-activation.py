@@ -9,7 +9,8 @@ body=c[at:end]
 at=c.index('static const struct airoha_xpon_match_data en7528_xpon_data = {');block=c[at:c.index('\n};',at)]
 enabled=bool(re.search(r'\.gpon_adjust_rx_delay\s*=\s*true',block))
 assert '.gpon_fine_delay = 0x1c' in block and '.gpon_rsp_time_activation = GPON_RSP_TIME_ACT_EN7528' in block
-assert 'gpon_guard_bits_override' not in block # Keep guard policy unchanged in this experiment.
+assert '.gpon_guard_bits_override = GPON_PHY_GUARD_BIT_NUM,' in block
+# The separate guard test covers the stock-default comparison; RX arithmetic stays unchanged.
 names=['GPON_DBG_PROBE_CTRL','GPON_DBG_PROBE_HIGH32','GPON_RSP_TIME','GPON_DBG_DLY']
 defines=''
 for name in names:

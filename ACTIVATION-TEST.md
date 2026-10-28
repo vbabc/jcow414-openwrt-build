@@ -1,5 +1,28 @@
 # Expiring JCOW414 GPON activation RAM experiment
 
+## Stock guard-default comparison: pon-activation-test-5
+
+Test4 exercised the measured RX-delay correction but still received no matching
+ONU-ID assignment. Test5 changes only the EN7528 match-data guard override from
+unset to the existing value 20. Exact JCOW414 R2.52 xpon.ko initializes its guard
+byte to 20 and passes that byte literally to PHY preamble bits 7:0 and MAC guard
+bits 7:0. A separate debug command accepts a runtime byte override. No startup
+caller was found in the preserved filesystem; this does not prove the value used
+on every stock boot or establish Airtel compatibility.
+
+This is one bounded comparison against the stock default, not a timing sweep or
+a confirmed registration fix. Serial, PLOAM, RX-delay arithmetic, preamble retry,
+optical calibration and all transmitter/identity/expiry controls are unchanged.
+The EN7528 match-data object also serves the en751627 compatible in the source;
+this build targets JCOW414 only and makes no validation claim for other boards.
+EN7523 and EN751221 match-data objects remain unchanged.
+
+Local tests compile the real MAC callback and PHY writer together and exercise
+announced guard values 0, 20, 32 and 255. Four mutations are rejected: missing
+override, another board's 24, MAC retaining the announced value, and PHY dropping
+the guard. Existing RX-delay, preamble, activation lifecycle and DTB checks pass.
+Full firmware compilation, artifact review and hardware tests remain pending.
+
 ## Measured MAC RX-delay candidate: pon-activation-test-4
 
 Test3 restored the negotiated preamble on15 hardware retries but still stalled at O3. This candidate changes only the EN7528 match-data flag that admits the existing `gpon_adjust_mac_rx_delay()` routine. JCOW414 stock R2.52 xpon.ko invokes its equivalent from the broadcast upstream-overhead handler in O2 before entering O3: select the RX-delay probe, halve its measured value, compensate response-time excess above0x577 and program the masked fixed-RX-delay field.
