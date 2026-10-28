@@ -113,7 +113,7 @@ if args.variant == 'baseline':
     seed = seed.replace('CONFIG_VERSION_NUMBER="pon-dev1"', 'CONFIG_VERSION_NUMBER="pon-dev3"', 1)
 else:
     seed = (repository / 'config.seed').read_text()
-    version = {'probe-only': 'pon-probe-only-3', 'frontend-diag': 'pon-frontend-diag-1', 'phy-diag': 'pon-phy-diag-1', 'mac-diag': 'pon-mac-diag-1', 'rx-diag': 'pon-rx-diag-1', 'activation-test': 'pon-activation-test-5'}[args.variant]
+    version = {'probe-only': 'pon-probe-only-3', 'frontend-diag': 'pon-frontend-diag-1', 'phy-diag': 'pon-phy-diag-1', 'mac-diag': 'pon-mac-diag-1', 'rx-diag': 'pon-rx-diag-1', 'activation-test': 'pon-activation-test-6'}[args.variant]
     seed += f'CONFIG_VERSION_NUMBER="{version}"\n'
 seed = '\n'.join(line for line in seed.splitlines() if not line.startswith(('CONFIG_CCACHE', 'CONFIG_DEVEL=')) and line not in ('# CONFIG_CCACHE is not set', '# CONFIG_DEVEL is not set')) + '\n'
 # CCACHE has a prompt conditional on DEVEL in the pinned Config-devel.in;

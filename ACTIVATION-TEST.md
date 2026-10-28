@@ -1,5 +1,30 @@
 # Expiring JCOW414 GPON activation RAM experiment
 
+## Stock rev2 link-timing comparison: pon-activation-test-6
+
+Test5 still reached O3 without O4/O5. The exact JCOW414 R2.52 phy.ko
+`en7571_init()` calls GPON TGEN before `en7571_link_reg(1)`. Its rev2 branch
+calls `en7571_T1delay_setting(0)`, which preserves T1DELAY byte0 bits7:4 and
+clears bits3:0. Our frontend's rev2 link helper omits that operation, while
+late runtime TGEN leaves byte0 at0xaa on this unit.
+
+Test6 adds only that rev2 byte normalization at the start of frontend TX
+rearm:0xaa becomes0xa0. It checks and propagates I2C errors before DCL,
+rogue-latch clearing or safe-circuit reset. The high nibble and other three
+timing bytes, including factory T0C/T1C and ERC/reset bits, are preserved.
+Other revisions keep their existing behavior. Burst-control, power, calibration,
+serial/PLOAM, guard20, measured RX delay and negotiated preamble remain unchanged.
+This is a stock-derived hypothesis, not a demonstrated Airtel registration fix.
+It does not copy the stock manufacturing calibration routine or write flash.
+
+Local tests compile the real frontend rearm and byte RMW functions. They cover
+all256 initial delay-byte values, other revisions, six bus-error positions,
+unchanged neighboring bytes and operation ordering. Five unsafe mutations
+are rejected. Earlier MAC/PHY, identity/lease, preamble, guard, RX-delay and
+DTB checks also pass. Full compilation, compiled-code and artifact review,
+and a no-fibre RAM test must precede a recorded optical attempt. The manual
+identity gate, default-off transmitter and180-second nonrenewable lease remain.
+
 ## Stock guard-default comparison: pon-activation-test-5
 
 Test4 exercised the measured RX-delay correction but still received no matching
