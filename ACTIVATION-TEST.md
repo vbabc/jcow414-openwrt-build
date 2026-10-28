@@ -1,5 +1,31 @@
 # Expiring JCOW414 GPON activation RAM experiment
 
+## Stock rev2 burst-control comparison: pon-activation-test-7
+
+Test6 applied the stock delay normalization but still reached only O3. All72
+complete active frontend snapshots showed DUMMY bit10 clear. Exact JCOW414 R2.52
+phy.ko en7571_link_reg(1) calls en7571_burst_ctrl after rev2 delay setup; the
+callee reads0x015c and ORs byte1 with0x04, preserving other bits. The generic
+helper exists but its rev2 link path omits that call.
+
+Test7 adds only a checked byte RMW in rev2 frontend rearm, after the existing
+delay step and before DCL/rogue/safe operations: DUMMY+1, keep0xfb, set0x04.
+An I2C error returns immediately. Reset/id/neighboring bits, other revisions,
+TGEN/T0C/T1C, laser targets, factory calibration, identity, guard20, RX delay and
+negotiated preamble are unchanged. The symbolic name burst-control-off does not
+by itself establish the hardware gate's physical behavior or valid OLT reception.
+This is a same-hardware stock-sequence hypothesis, not a demonstrated GPON fix.
+
+Actual-function tests cover all65536 delay/DUMMY-byte pairs, idempotent rearm,
+other revisions, eight bus-error positions and nine rejected mutations. Existing
+gate/identity/expiry, preamble, guard, RX-delay and board checks remain required.
+The firmware remains default-off, manually armed and limited to180seconds.
+The next hardware admission must verify the bit under inhibit without fibre,
+then use one recorded owner-controlled optical attempt. No permanent flash.
+An owner-requested clean handover will also leave the previous ONT powered off
+before fibre transfer; this external procedure is not a kernel change. Success
+would require a later controlled comparison before assigning cause to either.
+
 ## Stock rev2 link-timing comparison: pon-activation-test-6
 
 Test5 still reached O3 without O4/O5. The exact JCOW414 R2.52 phy.ko

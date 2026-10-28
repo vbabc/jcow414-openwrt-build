@@ -163,7 +163,7 @@
  int airoha_xpon_phy_set_tx_calibration_mode(struct phy *phy, bool enable);
 --- a/drivers/net/optical/airoha/en7571_main.c
 +++ b/drivers/net/optical/airoha/en7571_main.c
-@@ -364,6 +364,19 @@
+@@ -364,6 +364,27 @@
  {
  	struct en7571_priv *priv = container_of(lddla, struct en7571_priv, lddla);
  	int ret;
@@ -179,11 +179,19 @@
 +			dev_warn(lddla->dev, "EN7571 TX rearm delay failed: %d\n", ret);
 +			return ret;
 +		}
++
++		/* Stock rev2 link setup sets DUMMY byte1 bit2 after delay setup. */
++		ret = lddla_update8(lddla, EN7571_DUMMY + 1,
++				    EN7571_BURST_CTRL_MASK, EN7571_BURST_CTRL_OFF);
++		if (ret) {
++			dev_warn(lddla->dev, "EN7571 TX rearm burst failed: %d\n", ret);
++			return ret;
++		}
 +	}
  
  	ret = lddla_update8(lddla, EN7571_PWR_CTRL_0 + 1,
  			    EN7571_DCL_RST_B_MASK, EN7571_DCL_RST_B);
-@@ -603,7 +616,7 @@
+@@ -603,7 +624,7 @@
  	phy_diag = device_property_read_bool(dev, "airoha,phy-diagnostic");
  	frontend_diag = phy_diag ||
  		device_property_read_bool(dev, "airoha,frontend-diagnostic");
@@ -192,7 +200,7 @@
  		/* PHY probe owns and asserts GPIO16; EN7571 never requests it. */
  		priv->diag_phy = devm_phy_get(dev, "xpon");
  		if (IS_ERR(priv->diag_phy))
-@@ -630,13 +643,14 @@
+@@ -630,13 +651,14 @@
  	if (ret)
  		return dev_err_probe(dev, ret, "device init failed\n");
  
