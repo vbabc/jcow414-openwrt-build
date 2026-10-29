@@ -6,9 +6,10 @@ on:
       variant:
         description: Diagnostic build only; no deployment
         required: true
-        default: activation-test
+        default: ap-ready
         type: choice
         options:
+          - ap-ready
           - baseline
           - probe-only
           - frontend-diag

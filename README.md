@@ -18,6 +18,11 @@ The new **activation-test** variant adds a default-off, explicit runtime-identit
 
 Open **Actions → Cached guarded JCOW414 development builds → Run workflow**. Choose:
 
+- **ap-ready** (default): AP candidate with cumulative driver patches through test7,
+  corrected boot/UART/LAN/LED handling, DHCP-off management defaults and all optical
+  devices disabled. See [AP-READY.md](AP-READY.md). No PON activation UI is installed;
+  hardware validation and permanent installation remain separate later steps.
+
 - **baseline**: use the pinned source, feeds and sanitized LXC configuration, with the appended-DTB boot fix, the RAM-tested UART/LAN board corrections and version `pon-dev3`. The captured `config.lxc.seed` remains historical; the build script overrides its original version label. I2C, optical PHY/MAC and GDM2 remain disabled.
 - **probe-only**: enable the I2C controller and EN7571 identity/calibration probe. A paired driver patch returns before optical initialization, frontend registration or starting the control worker. Optical PHY/MAC and GDM2 remain disabled.
 - **frontend-diag**: experimental `pon-frontend-diag-1` bench build. Require exclusive GPIO16 ownership, drive the active-high transmitter disable high and read it back before frontend initialization; recheck it afterward. Register only temperature, supply-voltage and receiver-power telemetry. Omit transmitter callbacks, debug controls and the periodic control worker. Optical PHY/MAC and GDM2 remain disabled. This variant does program the analog frontend, including ADC/APD settings and TX control registers, while TX-disable is held; test it without fibre. The earlier exact frontend build passed a fibre-disconnected RAM test; later builds still require their own validation.

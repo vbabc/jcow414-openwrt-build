@@ -1,0 +1,6 @@
+/* Ethernet/Wi-Fi AP candidate. Cumulative optical code is dormant. */
+&i2c0 { status = "disabled"; };
+&jcow414_en7571 { status = "disabled"; };
+&xpon_phy { status = "disabled"; };
+&xpon { status = "disabled"; };
+&gdm2 { status = "disabled"; };
